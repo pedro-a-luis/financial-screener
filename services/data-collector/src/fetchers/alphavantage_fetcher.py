@@ -17,9 +17,7 @@ logger = structlog.get_logger()
 RATE_LIMIT_DELAY = 12.0
 
 
-class AlphaVantageF
-
-etcher:
+class AlphaVantageFetcher:
     """Fetch stock data using Alpha Vantage API."""
 
     def __init__(self, api_key: str):
