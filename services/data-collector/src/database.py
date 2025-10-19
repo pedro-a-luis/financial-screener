@@ -5,6 +5,7 @@ Handles PostgreSQL operations using asyncpg for async I/O.
 """
 
 import asyncpg
+import os
 from datetime import datetime
 from typing import List, Dict, Optional
 import structlog
@@ -19,6 +20,7 @@ class DatabaseManager:
         """Initialize database manager."""
         self.database_url = database_url
         self.pool: Optional[asyncpg.Pool] = None
+        self.schema = os.getenv("DATABASE_SCHEMA", "financial_screener")
 
     async def connect(self):
         """Create connection pool."""
@@ -27,8 +29,9 @@ class DatabaseManager:
             min_size=2,
             max_size=10,
             command_timeout=60,
+            server_settings={'search_path': self.schema},
         )
-        logger.info("database_connected")
+        logger.info("database_connected", schema=self.schema)
 
     async def disconnect(self):
         """Close connection pool."""

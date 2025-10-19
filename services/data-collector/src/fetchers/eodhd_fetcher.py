@@ -156,16 +156,18 @@ class EODHDFetcher:
 
     async def _fetch_general_info(self, normalized_ticker: str) -> Optional[Dict]:
         """
-        Fetch general company information.
+        Fetch general company information from fundamentals endpoint.
 
         API endpoint: GET /fundamentals/{TICKER}.{EXCHANGE}
-        Params: api_token=API_KEY, filter=General
+        Params: api_token=API_KEY
+
+        Note: Don't use filter=General - it causes 403 errors
 
         Args:
             normalized_ticker: EODHD-formatted ticker (e.g., AAPL.US)
 
         Returns:
-            Dictionary with company info
+            Dictionary with General section from fundamentals
         """
         try:
             await self._rate_limit()
@@ -173,7 +175,6 @@ class EODHDFetcher:
             url = f"{self.base_url}/fundamentals/{normalized_ticker}"
             params = {
                 "api_token": self.api_key,
-                "filter": "General",
             }
 
             response = requests.get(url, params=params, timeout=30)
@@ -181,7 +182,8 @@ class EODHDFetcher:
             data = response.json()
 
             if isinstance(data, dict) and "error" not in data:
-                return data
+                # Extract General section if it exists
+                return data.get("General", data)
 
             return None
 
