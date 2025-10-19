@@ -91,6 +91,12 @@ spec:
           value: "INFO"
         - name: CELERY_WORKER_CONCURRENCY
           value: "4"
+        - name: MODEL_CONFIG_PATH
+          value: "/app/config/model-config.yaml"
+        volumeMounts:
+        - name: model-config
+          mountPath: /app/config
+          readOnly: true
         resources:
           requests:
             memory: "512Mi"
@@ -98,6 +104,10 @@ spec:
           limits:
             memory: "2Gi"
             cpu: "4000m"
+      volumes:
+      - name: model-config
+        configMap:
+          name: model-config
 ---
 # Deployment for Flower (monitoring dashboard)
 apiVersion: v1

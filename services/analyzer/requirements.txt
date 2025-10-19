@@ -21,6 +21,7 @@ numpy==2.1.3
 python-dotenv==1.0.1
 pydantic==2.10.3
 pydantic-settings==2.6.1
+PyYAML==6.0.2  # YAML config file parsing
 
 # Logging
 structlog==24.4.0

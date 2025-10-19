@@ -1,0 +1,145 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-config
+  namespace: financial-screener
+data:
+  model-config.yaml: |
+    # Financial Screener Model Configuration
+    # This file contains all tunable parameters for the analysis models
+
+    # Analysis Thresholds
+    thresholds:
+      # Quality Metrics
+      quality:
+        roe_excellent: 0.20        # ROE > 20% = Excellent
+        roe_good: 0.15             # ROE > 15% = Good
+        roe_minimum: 0.10          # ROE < 10% = Poor
+        roa_excellent: 0.10        # ROA > 10% = Excellent
+        roa_good: 0.07             # ROA > 7% = Good
+        debt_to_equity_max: 2.0    # Debt/Equity > 2.0 = High risk
+        current_ratio_min: 1.5     # Current Ratio < 1.5 = Liquidity concern
+        profit_margin_min: 0.10    # Profit Margin < 10% = Low profitability
+
+      # Growth Metrics
+      growth:
+        revenue_growth_excellent: 0.20   # Revenue growth > 20% = Excellent
+        revenue_growth_good: 0.10        # Revenue growth > 10% = Good
+        earnings_growth_excellent: 0.15  # Earnings growth > 15% = Excellent
+        earnings_growth_good: 0.08       # Earnings growth > 8% = Good
+        negative_growth_threshold: -0.05 # Growth < -5% = Concerning
+
+      # Risk Metrics
+      risk:
+        volatility_low: 0.15       # Volatility < 15% = Low risk
+        volatility_high: 0.30      # Volatility > 30% = High risk
+        beta_low: 0.8              # Beta < 0.8 = Low market correlation
+        beta_high: 1.2             # Beta > 1.2 = High market correlation
+        sharpe_ratio_excellent: 2.0     # Sharpe > 2.0 = Excellent risk-adjusted return
+        sharpe_ratio_good: 1.0          # Sharpe > 1.0 = Good risk-adjusted return
+        max_drawdown_acceptable: -0.20  # Max drawdown > -20% = Acceptable
+
+      # Valuation Metrics
+      valuation:
+        pe_ratio_undervalued: 15.0      # P/E < 15 = Potentially undervalued
+        pe_ratio_overvalued: 30.0       # P/E > 30 = Potentially overvalued
+        pb_ratio_undervalued: 1.5       # P/B < 1.5 = Potentially undervalued
+        pb_ratio_overvalued: 3.0        # P/B > 3.0 = Potentially overvalued
+        peg_ratio_fair: 1.0             # PEG around 1.0 = Fair value
+        dividend_yield_attractive: 0.03 # Dividend > 3% = Attractive
+
+    # Recommendation Weights
+    recommendation_weights:
+      quality_score: 0.30        # 30% weight for quality metrics
+      growth_score: 0.25         # 25% weight for growth metrics
+      risk_score: 0.20           # 20% weight for risk metrics
+      valuation_score: 0.15      # 15% weight for valuation
+      sentiment_score: 0.10      # 10% weight for sentiment
+
+    # Recommendation Thresholds
+    recommendation_thresholds:
+      strong_buy: 0.80           # Score >= 80% = STRONG_BUY
+      buy: 0.65                  # Score >= 65% = BUY
+      hold: 0.45                 # Score >= 45% = HOLD
+      sell: 0.30                 # Score >= 30% = SELL
+      # Below 30% = STRONG_SELL
+
+    # Sentiment Analysis
+    sentiment:
+      positive_threshold: 0.6    # Score > 0.6 = Positive
+      negative_threshold: 0.4    # Score < 0.4 = Negative
+      # Between 0.4 and 0.6 = Neutral
+      news_lookback_days: 30     # Analyze news from last 30 days
+      min_news_articles: 5       # Minimum articles needed for reliable sentiment
+
+    # Screening Criteria
+    screening:
+      # Stock Screener
+      stock:
+        min_market_cap: 1000000000      # $1B minimum market cap
+        min_volume: 100000              # 100K minimum daily volume
+        max_pe_ratio: 50.0              # Skip stocks with P/E > 50
+        min_price: 5.0                  # Skip penny stocks < $5
+
+      # ETF Screener
+      etf:
+        min_aum: 100000000              # $100M minimum AUM
+        max_expense_ratio: 0.01         # 1% max expense ratio
+        min_volume: 50000               # 50K minimum daily volume
+
+      # Bond Screener
+      bond:
+        min_credit_rating: "BBB"        # Investment grade minimum
+        max_duration: 10.0              # Max 10 years duration
+        min_yield: 0.02                 # 2% minimum yield
+
+    # Data Collection
+    data_collection:
+      batch_size: 100                # Process 100 symbols per batch
+      rate_limit_delay: 1.0          # 1 second delay between API calls
+      max_retries: 3                 # Retry failed requests 3 times
+      timeout_seconds: 30            # 30 second timeout for API calls
+      cache_duration_hours: 24       # Cache data for 24 hours
+
+    # Celery Task Configuration
+    celery:
+      task_timeout: 300              # 5 minutes max per task
+      task_soft_timeout: 270         # 4.5 minutes soft timeout (cleanup time)
+      max_retries: 3                 # Retry failed tasks 3 times
+      retry_backoff: true            # Use exponential backoff
+      retry_backoff_max: 600         # Max 10 minutes between retries
+
+      # Queue priorities
+      queue_priorities:
+        stock_analysis: 5
+        etf_analysis: 4
+        bond_analysis: 3
+        screening: 2
+        recommendations: 1
+
+    # Database Settings
+    database:
+      connection_pool_size: 20       # 20 connections per worker
+      max_overflow: 10               # Allow 10 extra connections
+      pool_timeout: 30               # 30 second timeout for getting connection
+      query_timeout: 60              # 60 second max query time
+
+    # Performance Tuning
+    performance:
+      polars_threads: 4              # Threads per Polars operation
+      enable_lazy_evaluation: true   # Use Polars lazy API when possible
+      chunk_size: 10000              # Process data in 10K row chunks
+      enable_query_cache: true       # Cache frequent queries
+
+    # Logging
+    logging:
+      level: "INFO"                  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+      log_sql_queries: false         # Log all SQL queries (verbose)
+      log_task_details: true         # Log detailed task execution info
+
+    # Monitoring
+    monitoring:
+      enable_metrics: true           # Enable Prometheus metrics
+      enable_tracing: false          # Enable distributed tracing
+      health_check_interval: 60      # Health check every 60 seconds
