@@ -24,8 +24,8 @@ spec:
             image: financial-data-collector:latest
             imagePullPolicy: Never
             command:
-            - python
-            - src/main.py
+            - /bin/bash
+            - /app/src/run_with_ticker_file.sh
             - --mode
             - incremental
             - --tickers-file
@@ -80,14 +80,14 @@ spec:
             image: financial-data-collector:latest
             imagePullPolicy: Never
             command:
-            - /bin/sh
+            - /bin/bash
             - -c
             - |
-              python src/main.py --mode incremental --tickers-file config/tickers/dax40.txt &&
-              python src/main.py --mode incremental --tickers-file config/tickers/ftse100.txt &&
-              python src/main.py --mode incremental --tickers-file config/tickers/cac40.txt &&
-              python src/main.py --mode incremental --tickers-file config/tickers/ibex35.txt &&
-              python src/main.py --mode incremental --tickers-file config/tickers/other_european.txt
+              /app/src/run_with_ticker_file.sh --mode incremental --tickers-file config/tickers/dax40.txt &&
+              /app/src/run_with_ticker_file.sh --mode incremental --tickers-file config/tickers/ftse100.txt &&
+              /app/src/run_with_ticker_file.sh --mode incremental --tickers-file config/tickers/cac40.txt &&
+              /app/src/run_with_ticker_file.sh --mode incremental --tickers-file config/tickers/ibex35.txt &&
+              /app/src/run_with_ticker_file.sh --mode incremental --tickers-file config/tickers/other_european.txt
             env:
             - name: DATABASE_URL
               valueFrom:
@@ -138,8 +138,8 @@ spec:
             image: financial-data-collector:latest
             imagePullPolicy: Never
             command:
-            - python
-            - src/main.py
+            - /bin/bash
+            - /app/src/run_with_ticker_file.sh
             - --mode
             - incremental
             - --tickers-file
@@ -194,8 +194,8 @@ spec:
             image: financial-data-collector:latest
             imagePullPolicy: Never
             command:
-            - python
-            - src/main.py
+            - /bin/bash
+            - /app/src/run_with_ticker_file.sh
             - --mode
             - incremental
             - --tickers-file
