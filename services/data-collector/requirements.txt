@@ -8,11 +8,12 @@ polars-lts-cpu==1.17.1  # CPU-optimized for ARM64
 # Data fetching
 yfinance==0.2.48
 # Note: yfinance returns pandas, we'll convert to polars
+alpha-vantage==2.3.1  # Alpha Vantage API client (fallback)
 
 # Database
 psycopg2-binary==2.9.10  # PostgreSQL driver
 asyncpg==0.30.0  # Async PostgreSQL
-connectorx==0.4.0  # Fast PostgreSQL → Polars connector
+# connectorx==0.4.0  # Fast PostgreSQL → Polars connector (no ARM64 wheels)
 
 # Caching
 redis==5.2.0

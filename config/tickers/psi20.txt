@@ -1,0 +1,32 @@
+# PSI 20 (Portugal) Ticker Symbols
+# Portuguese stocks traded on Euronext Lisbon
+# Format: TICKER.LS (Lisbon suffix for yfinance)
+
+# Energy & Utilities
+EDP.LS
+EDPR.LS
+GALP.LS
+RENE.LS
+
+# Banking & Finance
+BCP.LS
+
+# Retail & Consumer
+JMT.LS
+SON.LS
+
+# Telecommunications
+NOS.LS
+
+# Industrial & Materials
+SEM.LS
+ALTR.LS
+COR.LS
+EGL.LS
+NVG.LS
+
+# Services
+CTT.LS
+
+# Real Estate & Construction
+# (Additional PSI constituents as they change)

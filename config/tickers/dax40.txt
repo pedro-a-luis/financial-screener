@@ -1,0 +1,63 @@
+# DAX 40 (Germany) Ticker Symbols
+# German stocks traded on Frankfurt/XETRA
+# Format: TICKER.DE (XETRA suffix for yfinance)
+# Also available on Tradegate Exchange
+
+# Technology
+SAP.DE
+INF.DE
+
+# Automotive
+VOW3.DE
+BMW.DE
+MBG.DE
+PAH3.DE
+CON.DE
+
+# Industrial
+SIE.DE
+ALV.DE
+MUV2.DE
+DB1.DE
+RHM.DE
+DHL.DE
+MTX.DE
+HNR1.DE
+
+# Finance & Insurance
+DBK.DE
+ALV.DE
+MUV2.DE
+DB1.DE
+
+# Healthcare & Pharma
+MRK.DE
+FRE.DE
+SHL.DE
+FME.DE
+
+# Chemicals & Materials
+BAS.DE
+LIN.DE
+HEN3.DE
+SY1.DE
+HEI.DE
+AIR.DE
+
+# Consumer
+ADS.DE
+ZAL.DE
+BEI.DE
+HEN3.DE
+
+# Energy & Utilities
+EOA.DE
+RWE.DE
+1COV.DE
+
+# Telecommunications
+DTE.DE
+O2D.DE
+
+# Real Estate
+VNA.DE

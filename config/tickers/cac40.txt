@@ -1,0 +1,49 @@
+# CAC 40 (France) Ticker Symbols
+# French stocks traded on Euronext Paris
+# Format: TICKER.PA (Paris suffix for yfinance)
+
+# Luxury & Consumer
+MC.PA
+OR.PA
+RMS.PA
+KER.PA
+PP.PA
+
+# Energy & Utilities
+TTE.PA
+EL.PA
+ENGI.PA
+
+# Industrial & Aerospace
+AIR.PA
+SAF.PA
+URW.PA
+
+# Banking & Finance
+BNP.PA
+ACA.PA
+GLE.PA
+SAN.PA
+
+# Technology & Telecom
+CAP.PA
+ORA.PA
+STM.PA
+DSY.PA
+
+# Healthcare & Pharma
+SAN.PA
+STLA.PA
+
+# Materials
+ML.PA
+RNO.PA
+VIV.PA
+
+# Services
+ATO.PA
+PUB.PA
+HO.PA
+RI.PA
+CS.PA
+BN.PA
