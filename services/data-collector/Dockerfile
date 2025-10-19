@@ -10,18 +10,27 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     --no-install-recommends \
     gcc \
-    postgresql-client \
+    g++ \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first (for Docker layer caching)
-COPY requirements.txt .
+COPY services/data-collector/requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy shared models
+COPY shared/models/ ./shared/models/
+
 # Copy application code
-COPY src/ ./src/
-COPY ../shared/ ./shared/
+COPY services/data-collector/src/ ./src/
+
+# Copy ticker lists
+COPY config/tickers/ ./config/tickers/
+
+# Set PYTHONPATH to include src directory
+ENV PYTHONPATH=/app/src:/app
 
 # Create non-root user for security
 RUN useradd -m -u 1000 appuser && \
@@ -34,4 +43,4 @@ HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD python -c "import sys; sys.exit(0)"
 
 # Default command (can be overridden by CronJob)
-CMD ["python", "src/main.py"]
+CMD ["python", "src/main.py", "--help"]

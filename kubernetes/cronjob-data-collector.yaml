@@ -1,0 +1,226 @@
+---
+# CronJob 1: Pre-Market (00:00 UTC) - S&P 500
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: data-collector-premarket
+  namespace: financial-screener
+spec:
+  schedule: "0 0 * * *"  # 00:00 UTC daily
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: data-collector
+            batch: premarket
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: data-collector
+            image: financial-data-collector:latest
+            imagePullPolicy: Never
+            command:
+            - python
+            - src/main.py
+            - --mode
+            - incremental
+            - --tickers-file
+            - config/tickers/sp500.txt
+            env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: DATABASE_URL
+            - name: DATABASE_SCHEMA
+              value: "financial_screener"
+            - name: REDIS_URL
+              value: "redis://redis.redis.svc.cluster.local:6379/0"
+            - name: ALPHAVANTAGE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: alphavantage-secret
+                  key: ALPHAVANTAGE_API_KEY
+            - name: LOG_LEVEL
+              value: "INFO"
+            resources:
+              requests:
+                memory: "512Mi"
+                cpu: "1000m"
+              limits:
+                memory: "2Gi"
+                cpu: "2000m"
+---
+# CronJob 2: European Market Open (06:00 UTC) - European indices
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: data-collector-european
+  namespace: financial-screener
+spec:
+  schedule: "0 6 * * *"  # 06:00 UTC daily
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: data-collector
+            batch: european
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: data-collector
+            image: financial-data-collector:latest
+            imagePullPolicy: Never
+            command:
+            - /bin/sh
+            - -c
+            - |
+              python src/main.py --mode incremental --tickers-file config/tickers/dax40.txt &&
+              python src/main.py --mode incremental --tickers-file config/tickers/ftse100.txt &&
+              python src/main.py --mode incremental --tickers-file config/tickers/cac40.txt &&
+              python src/main.py --mode incremental --tickers-file config/tickers/ibex35.txt &&
+              python src/main.py --mode incremental --tickers-file config/tickers/other_european.txt
+            env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: DATABASE_URL
+            - name: DATABASE_SCHEMA
+              value: "financial_screener"
+            - name: REDIS_URL
+              value: "redis://redis.redis.svc.cluster.local:6379/0"
+            - name: ALPHAVANTAGE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: alphavantage-secret
+                  key: ALPHAVANTAGE_API_KEY
+            - name: LOG_LEVEL
+              value: "INFO"
+            resources:
+              requests:
+                memory: "512Mi"
+                cpu: "1000m"
+              limits:
+                memory: "2Gi"
+                cpu: "2000m"
+---
+# CronJob 3: US Market Open (14:30 UTC) - PSI 20
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: data-collector-psi20
+  namespace: financial-screener
+spec:
+  schedule: "30 14 * * *"  # 14:30 UTC daily
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: data-collector
+            batch: psi20
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: data-collector
+            image: financial-data-collector:latest
+            imagePullPolicy: Never
+            command:
+            - python
+            - src/main.py
+            - --mode
+            - incremental
+            - --tickers-file
+            - config/tickers/psi20.txt
+            env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: DATABASE_URL
+            - name: DATABASE_SCHEMA
+              value: "financial_screener"
+            - name: REDIS_URL
+              value: "redis://redis.redis.svc.cluster.local:6379/0"
+            - name: ALPHAVANTAGE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: alphavantage-secret
+                  key: ALPHAVANTAGE_API_KEY
+            - name: LOG_LEVEL
+              value: "INFO"
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "500m"
+              limits:
+                memory: "1Gi"
+                cpu: "1000m"
+---
+# CronJob 4: Post-Market (21:00 UTC) - Full refresh
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: data-collector-postmarket
+  namespace: financial-screener
+spec:
+  schedule: "0 21 * * *"  # 21:00 UTC daily
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: data-collector
+            batch: postmarket
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: data-collector
+            image: financial-data-collector:latest
+            imagePullPolicy: Never
+            command:
+            - python
+            - src/main.py
+            - --mode
+            - incremental
+            - --tickers-file
+            - config/tickers/sp500.txt
+            env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: DATABASE_URL
+            - name: DATABASE_SCHEMA
+              value: "financial_screener"
+            - name: REDIS_URL
+              value: "redis://redis.redis.svc.cluster.local:6379/0"
+            - name: ALPHAVANTAGE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: alphavantage-secret
+                  key: ALPHAVANTAGE_API_KEY
+            - name: LOG_LEVEL
+              value: "INFO"
+            resources:
+              requests:
+                memory: "512Mi"
+                cpu: "1000m"
+              limits:
+                memory: "2Gi"
+                cpu: "2000m"
