@@ -1,26 +1,39 @@
 """
-Stock Data Fetcher using yfinance
+Stock Data Fetcher using EODHD
 
-Fetches stock price and fundamental data, converts to Polars for efficiency.
+Fetches stock price and fundamental data using EODHD API exclusively.
+https://eodhd.com/financial-apis/
+
+Free tier: 20 API calls/day
+Paid tier ($99.99/month): Unlimited access
 """
 
-import polars as pl
-import yfinance as yf
-from datetime import date, datetime
+import os
+from datetime import date
 from typing import List, Dict, Optional
 import structlog
+from .eodhd_fetcher import EODHDFetcher
 
 logger = structlog.get_logger()
 
 
 class StockDataFetcher:
-    """Fetch stock data using yfinance and convert to Polars."""
+    """Fetch stock data using EODHD API."""
+
+    def __init__(self):
+        """Initialize EODHD fetcher."""
+        self.eodhd_api_key = os.getenv("EODHD_API_KEY")
+        if not self.eodhd_api_key:
+            raise ValueError("EODHD_API_KEY environment variable is required")
+
+        self.eodhd_fetcher = EODHDFetcher(self.eodhd_api_key)
+        logger.info("eodhd_fetcher_initialized")
 
     async def fetch_prices(
         self, ticker: str, start_date: date, end_date: date
     ) -> List[Dict]:
         """
-        Fetch OHLCV price data for a stock.
+        Fetch OHLCV price data for a stock using EODHD.
 
         Args:
             ticker: Stock symbol
@@ -30,56 +43,11 @@ class StockDataFetcher:
         Returns:
             List of price dictionaries
         """
-        try:
-            # Fetch data using yfinance
-            stock = yf.Ticker(ticker)
-            hist = stock.history(start=start_date, end=end_date)
-
-            if hist.empty:
-                logger.warning("no_price_data", ticker=ticker)
-                return []
-
-            # Convert pandas to Polars (fast conversion)
-            df = pl.from_pandas(hist.reset_index())
-
-            # Rename columns to match our schema
-            df = df.rename(
-                {
-                    "Date": "date",
-                    "Open": "open",
-                    "High": "high",
-                    "Low": "low",
-                    "Close": "close",
-                    "Volume": "volume",
-                }
-            )
-
-            # Add metadata
-            info = stock.info
-            exchange = info.get("exchange", "")
-            name = info.get("longName", ticker)
-
-            # Convert to list of dicts
-            prices = df.to_dicts()
-
-            # Add metadata to first record for asset creation
-            if prices:
-                prices[0]["name"] = name
-                prices[0]["exchange"] = exchange
-
-            logger.info(
-                "prices_fetched", ticker=ticker, count=len(prices), exchange=exchange
-            )
-
-            return prices
-
-        except Exception as e:
-            logger.error("fetch_prices_failed", ticker=ticker, error=str(e))
-            return []
+        return await self.eodhd_fetcher.fetch_prices(ticker, start_date, end_date)
 
     async def fetch_fundamentals(self, ticker: str) -> Optional[Dict]:
         """
-        Fetch fundamental data for a stock.
+        Fetch fundamental data for a stock using EODHD.
 
         Args:
             ticker: Stock symbol
@@ -87,68 +55,11 @@ class StockDataFetcher:
         Returns:
             Dictionary of fundamental metrics
         """
-        try:
-            stock = yf.Ticker(ticker)
-            info = stock.info
-
-            if not info:
-                logger.warning("no_fundamental_data", ticker=ticker)
-                return None
-
-            # Extract fundamental metrics
-            fundamentals = {
-                "period_end_date": date.today(),
-                "period_type": "annual",
-                # Valuation
-                "market_cap": info.get("marketCap"),
-                "enterprise_value": info.get("enterpriseValue"),
-                "pe_ratio": info.get("trailingPE"),
-                "pb_ratio": info.get("priceToBook"),
-                "ps_ratio": info.get("priceToSalesTrailing12Months"),
-                "peg_ratio": info.get("pegRatio"),
-                "ev_ebitda": info.get("enterpriseToEbitda"),
-                # Profitability
-                "gross_margin": info.get("grossMargins"),
-                "operating_margin": info.get("operatingMargins"),
-                "profit_margin": info.get("profitMargins"),
-                "roe": info.get("returnOnEquity"),
-                "roa": info.get("returnOnAssets"),
-                # Financial health
-                "current_ratio": info.get("currentRatio"),
-                "quick_ratio": info.get("quickRatio"),
-                "debt_to_equity": info.get("debtToEquity"),
-                # Cash flow
-                "operating_cash_flow": info.get("operatingCashflow"),
-                "free_cash_flow": info.get("freeCashflow"),
-                # Income statement
-                "revenue": info.get("totalRevenue"),
-                "gross_profit": info.get("grossProfits"),
-                "ebitda": info.get("ebitda"),
-                "net_income": info.get("netIncomeToCommon"),
-                "eps": info.get("trailingEps"),
-                # Growth
-                "revenue_growth": info.get("revenueGrowth"),
-                "earnings_growth": info.get("earningsGrowth"),
-                # Dividend
-                "dividend_yield": info.get("dividendYield"),
-                "dividend_per_share": info.get("dividendRate"),
-                "payout_ratio": info.get("payoutRatio"),
-            }
-
-            # Remove None values
-            fundamentals = {k: v for k, v in fundamentals.items() if v is not None}
-
-            logger.info("fundamentals_fetched", ticker=ticker, metrics=len(fundamentals))
-
-            return fundamentals
-
-        except Exception as e:
-            logger.error("fetch_fundamentals_failed", ticker=ticker, error=str(e))
-            return None
+        return await self.eodhd_fetcher.fetch_fundamentals(ticker)
 
     async def get_stock_info(self, ticker: str) -> Optional[Dict]:
         """
-        Get basic stock information.
+        Get basic stock information using EODHD.
 
         Args:
             ticker: Stock symbol
@@ -156,19 +67,15 @@ class StockDataFetcher:
         Returns:
             Basic info dict
         """
-        try:
-            stock = yf.Ticker(ticker)
-            info = stock.info
-
+        # For now, we'll get this from fundamentals
+        fundamentals = await self.fetch_fundamentals(ticker)
+        if fundamentals:
             return {
                 "ticker": ticker,
-                "name": info.get("longName", ticker),
-                "exchange": info.get("exchange", ""),
-                "sector": info.get("sector"),
-                "industry": info.get("industry"),
-                "country": info.get("country", "USA"),
+                "name": ticker,  # EODHD fundamentals don't provide full company name easily
+                "exchange": ticker.split('.')[-1] if '.' in ticker else "US",
+                "sector": fundamentals.get("sector"),
+                "industry": fundamentals.get("industry"),
+                "country": "USA",  # Default, would need to parse from exchange
             }
-
-        except Exception as e:
-            logger.error("get_stock_info_failed", ticker=ticker, error=str(e))
-            return None
+        return None

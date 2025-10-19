@@ -6,9 +6,8 @@ polars==1.17.1
 polars-lts-cpu==1.17.1  # CPU-optimized for ARM64
 
 # Data fetching
-yfinance==0.2.48
-# Note: yfinance returns pandas, we'll convert to polars
-alpha-vantage==2.3.1  # Alpha Vantage API client (fallback)
+# EODHD API (using requests library - no official SDK needed)
+# API docs: https://eodhd.com/financial-apis/
 
 # Database
 psycopg2-binary==2.9.10  # PostgreSQL driver

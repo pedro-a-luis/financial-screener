@@ -62,11 +62,12 @@ class AlphaVantageFetcher:
 
             await self._rate_limit()
 
-            # Use TIME_SERIES_DAILY_ADJUSTED for comprehensive data
+            # Use TIME_SERIES_DAILY (free tier)
+            # Note: TIME_SERIES_DAILY_ADJUSTED is premium only
             params = {
-                "function": "TIME_SERIES_DAILY_ADJUSTED",
+                "function": "TIME_SERIES_DAILY",
                 "symbol": clean_ticker,
-                "outputsize": "full",  # Get full history
+                "outputsize": "compact",  # Last 100 days (full is premium)
                 "apikey": self.api_key,
             }
 
@@ -102,7 +103,7 @@ class AlphaVantageFetcher:
                         "high": float(values["2. high"]),
                         "low": float(values["3. low"]),
                         "close": float(values["4. close"]),
-                        "volume": int(float(values["6. volume"])),
+                        "volume": int(float(values["5. volume"])),  # Not "6." for TIME_SERIES_DAILY
                     })
 
             # Sort by date
