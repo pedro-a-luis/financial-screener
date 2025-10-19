@@ -1,0 +1,659 @@
+# Financial Screener - Claude Development Guidelines
+
+## Core Development Philosophy
+
+### KISS Principle (Keep It Simple, Stupid)
+- **Simple > Complex**: Always choose the simplest solution that works
+- **Explicit > Implicit**: Make code behavior obvious and transparent
+- **Fast > Perfect**: Optimize for performance and maintainability over theoretical perfection
+- **Measurable > Theoretical**: Focus on benchmarkable improvements
+
+### YAGNI (You Aren't Gonna Need It)
+- Don't build features until they are actually needed
+- Remove unused code and functions regularly
+- Focus on current requirements, not future possibilities
+- Prefer editing existing files over creating new ones
+
+### Design Principles
+- **Single Responsibility**: Each function should have one clear purpose
+- **Fail Fast**: Validate inputs early and provide clear error messages
+- **DRY (Don't Repeat Yourself)**: Extract common logic into reusable functions
+- **Composition > Inheritance**: Favor composition and small, composable functions
+
+### Modular Building Blocks Approach
+
+This project follows a **Lego-style modular architecture** where each component is:
+- **Self-contained**: Can be developed, tested, and deployed independently
+- **Interchangeable**: Can be replaced without affecting other components
+- **Reusable**: Common functionality extracted into shared libraries
+- **Composable**: Components combine to create complex functionality
+
+#### Module Organization
+
+```
+financial-screener/
+├── services/              # Independent microservices (building blocks)
+│   ├── data-collector/    # Data fetching module (yfinance)
+│   ├── news-fetcher/      # News aggregation module
+│   ├── spark-analyzer/    # Analysis engine module
+│   ├── sentiment-engine/  # Sentiment analysis module
+│   └── api/               # REST API module
+├── frontend/              # UI module (React)
+├── shared/                # Shared libraries (common building blocks)
+│   ├── models/            # Common data models
+│   ├── database/          # Database utilities
+│   └── cache/             # Caching utilities
+└── kubernetes/            # Deployment configuration
+```
+
+#### Module Communication
+- **Database**: Shared PostgreSQL (data persistence layer)
+- **Cache**: Redis (fast data exchange)
+- **Queue**: Redis (async job processing)
+- **API**: REST endpoints (synchronous communication)
+- **Events**: Redis pub/sub (async events) - optional
+
+#### Building Block Principles
+
+1. **Each Service is a Block**
+   ```python
+   # data-collector service - one job, one purpose
+   def collect_stock_data(ticker: str) -> StockData:
+       """Fetch and store stock data. Nothing else."""
+       data = fetch_from_yfinance(ticker)
+       save_to_database(data)
+       publish_to_cache(data)
+       return data
+   ```
+
+2. **Shared Libraries are Blocks**
+   ```python
+   # shared/models/stock.py - reusable data models
+   from dataclasses import dataclass
+   from datetime import date
+
+   @dataclass
+   class StockPrice:
+       ticker: str
+       date: date
+       open: float
+       high: float
+       low: float
+       close: float
+       volume: int
+   ```
+
+3. **Functions are Blocks**
+   ```python
+   # One function, one calculation
+   def calculate_pe_ratio(price: float, eps: float) -> float:
+       """Calculate P/E ratio. Period."""
+       if eps <= 0:
+           return None
+       return price / eps
+
+   def calculate_pb_ratio(price: float, book_value: float) -> float:
+       """Calculate P/B ratio. Period."""
+       if book_value <= 0:
+           return None
+       return price / book_value
+
+   # Compose small blocks into bigger blocks
+   def calculate_value_metrics(stock: Stock) -> ValueMetrics:
+       """Combine value calculations."""
+       return ValueMetrics(
+           pe_ratio=calculate_pe_ratio(stock.price, stock.eps),
+           pb_ratio=calculate_pb_ratio(stock.price, stock.book_value),
+           ps_ratio=calculate_ps_ratio(stock.price, stock.sales)
+       )
+   ```
+
+4. **React Components are Blocks**
+   ```typescript
+   // Small, focused components
+   const RecommendationBadge: FC<{ recommendation: Recommendation }> = ({ recommendation }) => {
+       // Just display a badge
+       return <Chip label={recommendation} color={getColor(recommendation)} />;
+   };
+
+   const SentimentIndicator: FC<{ score: number }> = ({ score }) => {
+       // Just display sentiment
+       return <Typography>{score > 0 ? '😊' : score < 0 ? '😟' : '😐'}</Typography>;
+   };
+
+   // Compose small blocks
+   const StockCard: FC<{ stock: Stock }> = ({ stock }) => {
+       return (
+           <Card>
+               <Typography>{stock.ticker}</Typography>
+               <RecommendationBadge recommendation={stock.recommendation} />
+               <SentimentIndicator score={stock.sentiment} />
+           </Card>
+       );
+   };
+   ```
+
+#### Module Independence
+
+Each service must be runnable standalone:
+
+```bash
+# Run data-collector independently
+cd services/data-collector
+python -m data_collector --ticker AAPL
+
+# Run API independently (with database)
+cd services/api
+uvicorn main:app --reload
+
+# Run frontend independently (with mock data)
+cd frontend
+npm run dev
+```
+
+#### Benefits of Modular Approach
+
+- **Parallel Development**: Different developers can work on different modules
+- **Easy Testing**: Test each block in isolation
+- **Incremental Deployment**: Deploy one service at a time
+- **Fault Isolation**: If one service fails, others continue
+- **Technology Flexibility**: Replace a module without rewriting everything
+- **Scalability**: Scale individual services based on load
+
+---
+
+## Project-Specific Guidelines
+
+### Architecture Overview
+This is a **Kubernetes-native financial analysis system** designed for:
+- **Platform**: Raspberry Pi 5 cluster (8 nodes, 8GB RAM each)
+- **Orchestration**: K3s Kubernetes v1.32.2+k3s1
+- **Storage**: NFS on Synology DS118 (192.168.1.10)
+- **Architecture**: ARM64 (aarch64)
+
+### Target Deployment Cluster
+- **Reference**: https://github.com/pedro-a-luis/local-rpi-cluster
+- **Master Node**: 192.168.1.240
+- **Worker Nodes**: 192.168.1.241-247
+- **Ansible**: Available for orchestration
+
+### Service Architecture (Microservices)
+1. **data-collector**: CronJob for stock/ETF/bond data (yfinance)
+2. **news-fetcher**: CronJob for news aggregation (multiple sources)
+3. **spark-analyzer**: PySpark distributed analysis engine
+4. **sentiment-engine**: PySpark NLP for sentiment analysis
+5. **api**: FastAPI REST API
+6. **frontend**: React + TypeScript + Material-UI
+7. **PostgreSQL**: Historical data storage
+8. **Redis**: Multi-tier caching and job queue
+
+### Asset Types Supported
+- **Stocks**: Individual equities, common/preferred shares, ADRs
+- **ETFs**: Equity, bond, commodity, sector, thematic ETFs
+- **Bonds**: Government, corporate, municipal, bond ETFs, TIPS
+
+### Technology Stack
+
+#### Backend (Python)
+- **Python Version**: 3.11+ (ARM64 compatible)
+- **Data Collection**: yfinance, pandas, requests
+- **Processing**: PySpark 3.5+
+- **NLP**: TextBlob, VADER, or lightweight transformers
+- **API**: FastAPI, Pydantic, SQLAlchemy
+- **Database**: asyncpg (PostgreSQL), redis-py
+- **Testing**: pytest, pytest-asyncio
+
+#### Frontend (TypeScript/React)
+- **React**: 18+ with TypeScript
+- **UI Library**: Material-UI (MUI v5)
+- **State Management**: Redux Toolkit
+- **Data Fetching**: React Query (TanStack Query)
+- **Charts**: Recharts or Chart.js
+- **Routing**: React Router v6
+- **Build Tool**: Vite
+
+#### Infrastructure
+- **Container Runtime**: Docker (ARM64 images)
+- **Orchestration**: Kubernetes (K3s)
+- **Spark Operator**: spark-on-k8s-operator
+- **Database**: PostgreSQL 16 (ARM64)
+- **Cache**: Redis 7 (ARM64)
+- **Storage**: NFS CSI driver
+
+### Data Strategy
+
+#### Three-Tier Caching
+1. **Cold Storage (PostgreSQL)**
+   - Historical price data (5 years daily, 10 years quarterly)
+   - Fundamentals, news archive, sentiment history
+
+2. **Warm Cache (Redis)**
+   - Today's prices (TTL: 1h market hours, 24h after close)
+   - Screening results (TTL: 24h)
+   - Asset details (TTL: 4h)
+   - User portfolios (TTL: 1h)
+
+3. **Hot Cache (Frontend)**
+   - Currently viewed data
+   - Active filters and results
+   - Session data
+
+#### Data Loading Philosophy
+- **Initial Load**: One-time bulk historical download (2-5 years)
+- **Incremental Updates**: Daily updates fetch only new/changed data
+- **Smart Caching**: Multi-tier to minimize API calls
+- **On-Demand**: Individual asset details fetched when requested
+
+#### CronJob Schedules (UTC)
+- `daily-price-update`: 2 AM (after US market close)
+- `daily-fundamentals-check`: 3 AM
+- `daily-bond-update`: 3:15 AM
+- `news-fetch-portfolio`: Every 30 minutes (market hours)
+- `sentiment-analysis`: Every 2 hours
+- `trending-news`: Every 4 hours
+- `weekly-validation`: Sunday 4 AM
+- `monthly-etf-holdings`: 1st of month, 5 AM
+- `quarterly-fundamentals`: 1st of quarter, 5 AM
+
+### Coding Standards
+
+#### Python
+```python
+# Use type hints everywhere
+def calculate_pe_ratio(price: float, eps: float) -> float:
+    if eps <= 0:
+        raise ValueError("EPS must be positive")
+    return price / eps
+
+# Use dataclasses for data structures
+from dataclasses import dataclass
+from datetime import date
+
+@dataclass
+class StockPrice:
+    ticker: str
+    date: date
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+
+# Use enums for constants
+from enum import Enum
+
+class AssetType(Enum):
+    STOCK = "stock"
+    ETF = "etf"
+    BOND = "bond"
+
+class Recommendation(Enum):
+    STRONG_BUY = "STRONG_BUY"
+    BUY = "BUY"
+    HOLD = "HOLD"
+    SELL = "SELL"
+    STRONG_SELL = "STRONG_SELL"
+
+# Async/await for I/O operations
+async def fetch_stock_data(ticker: str) -> dict:
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"/api/stocks/{ticker}")
+        return response.json()
+
+# Error handling with specific exceptions
+class DataFetchError(Exception):
+    """Raised when data fetch fails"""
+    pass
+
+try:
+    data = fetch_from_api(ticker)
+except requests.HTTPError as e:
+    raise DataFetchError(f"Failed to fetch {ticker}: {e}")
+```
+
+#### TypeScript/React
+```typescript
+// Use TypeScript interfaces for all data structures
+interface Stock {
+  ticker: string;
+  assetType: AssetType;
+  recommendation: Recommendation;
+  score: number;
+  price: number;
+  fundamentals: StockFundamentals;
+}
+
+enum AssetType {
+  STOCK = 'stock',
+  ETF = 'etf',
+  BOND = 'bond'
+}
+
+enum Recommendation {
+  STRONG_BUY = 'STRONG_BUY',
+  BUY = 'BUY',
+  HOLD = 'HOLD',
+  SELL = 'SELL',
+  STRONG_SELL = 'STRONG_SELL'
+}
+
+// Functional components with TypeScript
+import React, { FC } from 'react';
+
+interface StockCardProps {
+  stock: Stock;
+  onSelect: (ticker: string) => void;
+}
+
+const StockCard: FC<StockCardProps> = ({ stock, onSelect }) => {
+  return (
+    <Card onClick={() => onSelect(stock.ticker)}>
+      <Typography variant="h6">{stock.ticker}</Typography>
+      <RecommendationBadge recommendation={stock.recommendation} />
+    </Card>
+  );
+};
+
+// Use React Query for data fetching
+import { useQuery } from '@tanstack/react-query';
+
+const useStockData = (ticker: string) => {
+  return useQuery({
+    queryKey: ['stock', ticker],
+    queryFn: () => fetchStock(ticker),
+    staleTime: 1000 * 60 * 5, // 5 minutes
+  });
+};
+
+// Redux Toolkit for state management
+import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+
+interface PortfolioState {
+  holdings: Stock[];
+  totalValue: number;
+}
+
+const portfolioSlice = createSlice({
+  name: 'portfolio',
+  initialState: { holdings: [], totalValue: 0 } as PortfolioState,
+  reducers: {
+    addHolding: (state, action: PayloadAction<Stock>) => {
+      state.holdings.push(action.payload);
+    },
+  },
+});
+```
+
+#### SQL (PostgreSQL)
+```sql
+-- Use clear naming conventions
+-- Tables: plural, snake_case
+-- Indexes: idx_{table}_{columns}
+-- Foreign keys: fk_{table}_{ref_table}
+
+-- Always include timestamps
+CREATE TABLE stocks (
+    id SERIAL PRIMARY KEY,
+    ticker VARCHAR(10) NOT NULL UNIQUE,
+    name VARCHAR(255) NOT NULL,
+    asset_type VARCHAR(20) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Create indexes for common queries
+CREATE INDEX idx_stocks_ticker ON stocks(ticker);
+CREATE INDEX idx_stocks_asset_type ON stocks(asset_type);
+
+-- Use foreign keys for referential integrity
+CREATE TABLE stock_prices (
+    id BIGSERIAL PRIMARY KEY,
+    stock_id INTEGER NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
+    date DATE NOT NULL,
+    open DECIMAL(12, 4) NOT NULL,
+    high DECIMAL(12, 4) NOT NULL,
+    low DECIMAL(12, 4) NOT NULL,
+    close DECIMAL(12, 4) NOT NULL,
+    volume BIGINT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE(stock_id, date)
+);
+
+CREATE INDEX idx_prices_stock_date ON stock_prices(stock_id, date DESC);
+```
+
+### Docker Best Practices
+
+```dockerfile
+# Multi-stage builds for smaller images
+FROM python:3.11-slim-bookworm AS builder
+
+# Install only production dependencies
+RUN pip install --no-cache-dir poetry
+COPY pyproject.toml poetry.lock ./
+RUN poetry export -f requirements.txt > requirements.txt
+
+FROM python:3.11-slim-bookworm
+
+# ARM64 compatibility
+ARG TARGETPLATFORM
+RUN echo "Building for $TARGETPLATFORM"
+
+# Non-root user for security
+RUN useradd -m -u 1000 appuser
+USER appuser
+
+WORKDIR /app
+COPY --from=builder requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s \
+  CMD curl -f http://localhost:8000/health || exit 1
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+### Kubernetes Resource Limits
+
+```yaml
+# Appropriate for Raspberry Pi 5 (8GB RAM)
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "250m"
+  limits:
+    memory: "1Gi"
+    cpu: "500m"
+
+# Spark jobs - spread across cluster
+spark:
+  driver:
+    memory: "1g"
+    cores: 1
+  executor:
+    memory: "1g"
+    cores: 1
+    instances: 6  # Use 6 of 7 worker nodes
+```
+
+### Performance Guidelines
+
+#### Database Optimization
+- Use connection pooling (asyncpg)
+- Batch inserts (1000 records at a time)
+- Use COPY for bulk imports
+- Partition large tables by date
+- Analyze query plans with EXPLAIN
+- Vacuum regularly
+
+#### API Optimization
+- Use Redis caching for expensive queries
+- Implement pagination (limit 100 results)
+- Use async/await for concurrent operations
+- Compress responses (gzip)
+- Rate limiting to prevent abuse
+
+#### Frontend Optimization
+- Code splitting with React.lazy()
+- Memoize expensive calculations (useMemo)
+- Virtualize long lists (react-window)
+- Debounce search inputs (300ms)
+- Optimize re-renders (React.memo)
+- Use production builds
+
+### Testing Strategy
+
+#### Unit Tests
+- Test business logic in isolation
+- Mock external dependencies
+- Aim for 80%+ coverage on core logic
+
+#### Integration Tests
+- Test API endpoints end-to-end
+- Use test database (Docker container)
+- Test Redis caching behavior
+
+#### E2E Tests (Optional)
+- Test critical user flows
+- Use Playwright or Cypress
+
+### Security Considerations
+
+- Never commit secrets (use K8s secrets)
+- Validate all user inputs (Pydantic)
+- Use parameterized queries (prevent SQL injection)
+- HTTPS only in production
+- CORS configuration (whitelist origins)
+- Rate limiting on public endpoints
+- JWT authentication for API (if needed)
+
+### Monitoring & Logging
+
+```python
+# Structured logging
+import logging
+import json
+
+logger = logging.getLogger(__name__)
+
+logger.info(json.dumps({
+    "event": "data_fetch",
+    "ticker": ticker,
+    "duration_ms": duration,
+    "success": True
+}))
+```
+
+### Git Workflow
+
+- **Main branch**: Production-ready code
+- **Feature branches**: `feature/stock-screener`, `feature/sentiment-analysis`
+- **Commit messages**: Clear, descriptive
+  - `feat: Add bond screening logic`
+  - `fix: Correct P/E ratio calculation for negative earnings`
+  - `refactor: Extract sentiment calculation to separate function`
+  - `docs: Update API endpoint documentation`
+
+### Documentation Requirements
+
+- README.md with setup instructions
+- API documentation (FastAPI auto-generates)
+- Database schema diagram
+- Architecture diagram
+- Deployment guide for K3s cluster
+- Environment variables reference
+
+### Common Pitfalls to Avoid
+
+- **Don't**: Over-engineer with unnecessary abstractions
+- **Don't**: Fetch entire history when you only need recent data
+- **Don't**: Store duplicate data across services
+- **Don't**: Create new files when editing existing ones works
+- **Don't**: Use synchronous code for I/O operations
+- **Don't**: Hardcode configuration values
+- **Don't**: Ignore error handling
+- **Do**: Profile code before optimizing
+- **Do**: Use batch operations for bulk data
+- **Do**: Leverage existing libraries (don't reinvent the wheel)
+- **Do**: Write self-documenting code with clear variable names
+- **Do**: Build small, focused modules that do one thing well
+- **Do**: Compose modules together for complex functionality
+
+---
+
+## Quick Reference
+
+### Useful Commands
+
+```bash
+# Database
+psql -h localhost -U financial -d financial_db
+
+# Redis
+redis-cli -h localhost -p 6379
+
+# Kubernetes
+kubectl get pods -n financial-screener
+kubectl logs -f deployment/api -n financial-screener
+kubectl describe pod <pod-name> -n financial-screener
+
+# Docker build (ARM64)
+docker buildx build --platform linux/arm64 -t financial-api:latest .
+
+# Run tests
+pytest tests/ -v --cov=services
+
+# Format code
+black services/
+isort services/
+
+# Lint
+flake8 services/
+mypy services/
+
+# Frontend
+cd frontend
+npm run dev
+npm run build
+npm test
+```
+
+### Environment Variables
+
+```bash
+# Database
+DATABASE_URL=postgresql://user:pass@postgres:5432/financial_db
+
+# Redis
+REDIS_URL=redis://redis:6379/0
+
+# API Keys (free tiers)
+ALPHA_VANTAGE_API_KEY=your_key_here
+NEWS_API_KEY=your_key_here
+
+# Application
+LOG_LEVEL=INFO
+ENVIRONMENT=development
+```
+
+---
+
+## Project Status
+
+**Current Phase**: Initial Setup
+**Next Steps**:
+1. Create database schema
+2. Build data collector service
+3. Implement basic API
+4. Create React frontend skeleton
+5. Deploy to K3s cluster
+
+**Target Completion**: Phased rollout
+- Phase 1: Stock screening (2 weeks)
+- Phase 2: ETF support (1 week)
+- Phase 3: Bond support (1 week)
+- Phase 4: News & sentiment (2 weeks)
+- Phase 5: React dashboard (2 weeks)

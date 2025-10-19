@@ -1,0 +1,35 @@
+# Data Collector Service Dependencies
+# Python 3.11+
+
+# Data processing - Polars (fast, low memory)
+polars==1.17.1
+polars-lts-cpu==1.17.1  # CPU-optimized for ARM64
+
+# Data fetching
+yfinance==0.2.48
+# Note: yfinance returns pandas, we'll convert to polars
+
+# Database
+psycopg2-binary==2.9.10  # PostgreSQL driver
+asyncpg==0.30.0  # Async PostgreSQL
+connectorx==0.4.0  # Fast PostgreSQL → Polars connector
+
+# Caching
+redis==5.2.0
+
+# HTTP
+requests==2.32.3
+httpx==0.28.1
+
+# Configuration
+python-dotenv==1.0.1
+pydantic==2.10.3
+pydantic-settings==2.6.1
+
+# Logging
+structlog==24.4.0
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.24.0
+pytest-cov==6.0.0

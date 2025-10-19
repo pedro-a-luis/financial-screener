@@ -1,0 +1,160 @@
+---
+# ConfigMap for analyzer configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: analyzer-config
+  namespace: financial-screener
+data:
+  REDIS_URL: "redis://redis.databases.svc.cluster.local:6379/0"
+  POSTGRES_HOST: "postgresql-primary.databases.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  DATABASE_SCHEMA: "financial_screener"
+---
+# Secret for database credentials (will need to be updated with actual credentials)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+  namespace: financial-screener
+type: Opaque
+stringData:
+  POSTGRES_DB: "postgres"
+  POSTGRES_USER: "postgres"
+  POSTGRES_PASSWORD: "Postgres123"
+  DATABASE_URL: "postgresql://postgres:Postgres123@postgresql-primary.databases.svc.cluster.local:5432/postgres?options=-c%20search_path%3Dfinancial_screener%2Cpublic"
+---
+# DaemonSet for Celery workers (one per worker node)
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: celery-worker
+  namespace: financial-screener
+  labels:
+    app: celery-worker
+spec:
+  selector:
+    matchLabels:
+      app: celery-worker
+  template:
+    metadata:
+      labels:
+        app: celery-worker
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: NotIn
+                values:
+                - pi-master
+      containers:
+      - name: celery-worker
+        image: financial-analyzer:latest
+        imagePullPolicy: Never
+        command:
+        - celery
+        - -A
+        - celery_app
+        - worker
+        - --loglevel=info
+        - --concurrency=4
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: DATABASE_URL
+        - name: DATABASE_SCHEMA
+          valueFrom:
+            configMapKeyRef:
+              name: analyzer-config
+              key: DATABASE_SCHEMA
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: analyzer-config
+              key: REDIS_URL
+        - name: CELERY_BROKER_URL
+          valueFrom:
+            configMapKeyRef:
+              name: analyzer-config
+              key: REDIS_URL
+        - name: CELERY_RESULT_BACKEND
+          valueFrom:
+            configMapKeyRef:
+              name: analyzer-config
+              key: REDIS_URL
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: CELERY_WORKER_CONCURRENCY
+          value: "4"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "4000m"
+---
+# Deployment for Flower (monitoring dashboard)
+apiVersion: v1
+kind: Service
+metadata:
+  name: flower
+  namespace: financial-screener
+spec:
+  selector:
+    app: flower
+  ports:
+  - port: 5555
+    targetPort: 5555
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flower
+  namespace: financial-screener
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flower
+  template:
+    metadata:
+      labels:
+        app: flower
+    spec:
+      containers:
+      - name: flower
+        image: financial-analyzer:latest
+        imagePullPolicy: Never
+        command:
+        - celery
+        - -A
+        - celery_app
+        - flower
+        - --port=5555
+        env:
+        - name: CELERY_BROKER_URL
+          valueFrom:
+            configMapKeyRef:
+              name: analyzer-config
+              key: REDIS_URL
+        - name: CELERY_RESULT_BACKEND
+          valueFrom:
+            configMapKeyRef:
+              name: analyzer-config
+              key: REDIS_URL
+        ports:
+        - containerPort: 5555
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
