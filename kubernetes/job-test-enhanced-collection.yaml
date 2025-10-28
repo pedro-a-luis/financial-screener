@@ -1,0 +1,52 @@
+---
+# Test Job: Enhanced Data Collection
+# Tests complete EODHD data collection with 10 sample stocks
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: test-enhanced-collection
+  namespace: financial-screener
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app: data-collector
+        batch: test-enhanced
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: data-collector
+        image: financial-data-collector:latest
+        imagePullPolicy: Never
+        command:
+        - python
+        - /app/src/main_enhanced.py
+        - --mode
+        - bulk
+        - --tickers
+        - AAPL,MSFT,GOOGL,AMZN,TSLA,NVDA,META,BRK-B,JPM,V
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: DATABASE_URL
+        - name: DATABASE_SCHEMA
+          value: "financial_screener"
+        - name: REDIS_URL
+          value: "redis://redis.redis.svc.cluster.local:6379/0"  # Correct shared Redis
+        - name: EODHD_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: data-api-secrets
+              key: EODHD_API_KEY
+        - name: LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "1000m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"

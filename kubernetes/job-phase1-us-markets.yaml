@@ -1,0 +1,84 @@
+---
+# Phase 1: US Markets Bulk Load
+# Loads all NYSE + NASDAQ stocks (6,433 tickers)
+# Estimated time: 2-3 hours
+# API calls: ~13,000 (fundamentals + prices)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: phase1-us-markets
+  namespace: financial-screener
+  labels:
+    phase: "1"
+    markets: "us"
+spec:
+  backoffLimit: 2
+  completions: 1
+  parallelism: 1
+  template:
+    metadata:
+      labels:
+        app: data-collector
+        phase: phase1
+        batch: us-markets
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: data-collector
+        image: financial-data-collector:latest
+        imagePullPolicy: Never
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "=== Phase 1: US Markets Bulk Load ==="
+          echo "Loading NYSE + NASDAQ stocks..."
+          echo ""
+
+          # Read all tickers from both files
+          NYSE_TICKERS=$(cat /app/config/tickers/nyse.txt | tr '\n' ',' | sed 's/,$//')
+          NASDAQ_TICKERS=$(cat /app/config/tickers/nasdaq.txt | tr '\n' ',' | sed 's/,$//')
+
+          # Combine them
+          ALL_TICKERS="${NYSE_TICKERS},${NASDAQ_TICKERS}"
+
+          echo "NYSE tickers: $(cat /app/config/tickers/nyse.txt | wc -l)"
+          echo "NASDAQ tickers: $(cat /app/config/tickers/nasdaq.txt | wc -l)"
+          echo "Total: 6,433 stocks"
+          echo ""
+
+          # Run the enhanced data collector
+          python /app/src/main_enhanced.py \
+            --mode bulk \
+            --tickers "$ALL_TICKERS" \
+            --batch-size 100
+
+          echo ""
+          echo "=== Phase 1 Complete ==="
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: DATABASE_URL
+        - name: DATABASE_SCHEMA
+          value: "financial_screener"
+        - name: REDIS_URL
+          value: "redis://redis.redis.svc.cluster.local:6379/0"
+        - name: EODHD_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: data-api-secrets
+              key: EODHD_API_KEY
+        - name: LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "2000m"
+          limits:
+            memory: "4Gi"
+            cpu: "3000m"
+      nodeSelector:
+        kubernetes.io/hostname: pi-master  # Run on master node (more resources)

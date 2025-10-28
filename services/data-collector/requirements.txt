@@ -14,9 +14,6 @@ psycopg2-binary==2.9.10  # PostgreSQL driver
 asyncpg==0.30.0  # Async PostgreSQL
 # connectorx==0.4.0  # Fast PostgreSQL → Polars connector (no ARM64 wheels)
 
-# Caching
-redis==5.2.0
-
 # HTTP
 requests==2.32.3
 httpx==0.28.1

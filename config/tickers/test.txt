@@ -1,0 +1,4 @@
+# Test Exchange - Only 3 tickers for testing
+TSLA
+NVDA
+META
