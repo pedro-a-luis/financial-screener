@@ -1,0 +1,54 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: historical-load-first-run
+  namespace: financial-screener
+spec:
+  ttlSecondsAfterFinished: 86400  # Keep for 24 hours
+  template:
+    metadata:
+      labels:
+        app: data-collector
+        job-type: historical
+        batch: first-month
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: data-collector
+        image: financial-data-collector:latest
+        imagePullPolicy: Never
+        command:
+          - python
+          - /app/src/main_enhanced.py
+        args:
+          - --execution-id
+          - "historical_manual_2025-10-27"
+          - --tickers
+          - "AAPL,MSFT,GOOGL"
+          - --mode
+          - historical
+          - --start-date
+          - "2025-09-01"
+          - --end-date
+          - "2025-09-30"
+          - --skip-existing
+          - --batch-size
+          - "3"
+        env:
+          - name: DATABASE_URL
+            valueFrom:
+              secretKeyRef:
+                name: postgres-secret
+                key: DATABASE_URL
+          - name: EODHD_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: data-api-secrets
+                key: EODHD_API_KEY
+        resources:
+          requests:
+            cpu: "1000m"
+            memory: "2Gi"
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"

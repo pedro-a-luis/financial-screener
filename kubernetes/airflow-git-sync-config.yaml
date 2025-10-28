@@ -1,0 +1,113 @@
+---
+# Git-Sync Configuration for Airflow DAGs
+# Automatically syncs DAGs from git repository to Airflow
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: airflow-git-sync-config
+  namespace: airflow
+data:
+  GIT_SYNC_REPO: "https://github.com/yourusername/financial-screener.git"  # TODO: Update with actual repo URL
+  GIT_SYNC_BRANCH: "main"
+  GIT_SYNC_ROOT: "/git"
+  GIT_SYNC_DEST: "dags"
+  GIT_SYNC_WAIT: "60"  # Sync every 60 seconds
+  GIT_SYNC_MAX_FAILURES: "10"
+  GIT_SYNC_ONE_TIME: "false"
+  GIT_SYNC_DEPTH: "1"  # Shallow clone
+
+---
+# Patch for Airflow Scheduler StatefulSet
+# Adds git-sync sidecar container to sync DAGs from git
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: airflow-scheduler
+  namespace: airflow
+spec:
+  template:
+    spec:
+      volumes:
+        - name: dags
+          emptyDir: {}
+
+      initContainers:
+        # Initial sync before scheduler starts
+        - name: git-sync-init
+          image: registry.k8s.io/git-sync/git-sync:v4.2.1
+          env:
+            - name: GIT_SYNC_ONE_TIME
+              value: "true"
+          envFrom:
+            - configMapRef:
+                name: airflow-git-sync-config
+          volumeMounts:
+            - name: dags
+              mountPath: /git
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+
+      containers:
+        # Modify existing scheduler container
+        - name: scheduler
+          volumeMounts:
+            - name: dags
+              mountPath: /opt/airflow/dags
+              readOnly: true
+              subPath: dags/airflow/dags  # Path within git repo
+
+        # Git-sync sidecar - continuous sync
+        - name: git-sync
+          image: registry.k8s.io/git-sync/git-sync:v4.2.1
+          envFrom:
+            - configMapRef:
+                name: airflow-git-sync-config
+          volumeMounts:
+            - name: dags
+              mountPath: /git
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "64Mi"
+            limits:
+              cpu: "100m"
+              memory: "128Mi"
+          securityContext:
+            runAsUser: 65533  # nobody user
+            runAsGroup: 65533
+            fsGroup: 65533
+            runAsNonRoot: true
+
+---
+# Alternative: If using private repository, create SSH key secret
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: git-sync-ssh-key
+#   namespace: airflow
+# type: Opaque
+# data:
+#   ssh: <base64-encoded-private-key>
+#
+# Then add to git-sync container:
+#   env:
+#     - name: GIT_SYNC_SSH
+#       value: "true"
+#     - name: GIT_SSH_KEY_FILE
+#       value: "/etc/git-secret/ssh"
+#   volumeMounts:
+#     - name: git-secret
+#       mountPath: /etc/git-secret
+#       readOnly: true
+#   volumes:
+#     - name: git-secret
+#       secret:
+#         secretName: git-sync-ssh-key
+#         defaultMode: 0400

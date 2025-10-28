@@ -1,0 +1,116 @@
+---
+# Phase 1: US Markets - NYSE (2,339 stocks)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: historical-load-nyse
+  namespace: financial-screener
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: data-collector
+        batch: historical-load
+        phase: phase1-us
+        exchange: nyse
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: data-collector
+        image: financial-data-collector:latest
+        imagePullPolicy: Never
+        command:
+        - /bin/bash
+        - /app/src/run_with_ticker_file.sh
+        - --mode
+        - bulk
+        - --tickers-file
+        - config/tickers/nyse.txt
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: DATABASE_URL
+        - name: DATABASE_SCHEMA
+          value: "financial_screener"
+        - name: REDIS_URL
+          value: "redis://redis.redis.svc.cluster.local:6379/0"
+        - name: EODHD_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: data-api-secrets
+              key: EODHD_API_KEY
+        - name: ALPHAVANTAGE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: data-api-secrets
+              key: ALPHAVANTAGE_API_KEY
+        - name: LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "1500m"
+          limits:
+            memory: "3Gi"
+            cpu: "2500m"
+---
+# Phase 1: US Markets - NASDAQ (4,086 stocks)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: historical-load-nasdaq
+  namespace: financial-screener
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: data-collector
+        batch: historical-load
+        phase: phase1-us
+        exchange: nasdaq
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: data-collector
+        image: financial-data-collector:latest
+        imagePullPolicy: Never
+        command:
+        - /bin/bash
+        - /app/src/run_with_ticker_file.sh
+        - --mode
+        - bulk
+        - --tickers-file
+        - config/tickers/nasdaq.txt
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: DATABASE_URL
+        - name: DATABASE_SCHEMA
+          value: "financial_screener"
+        - name: REDIS_URL
+          value: "redis://redis.redis.svc.cluster.local:6379/0"
+        - name: EODHD_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: data-api-secrets
+              key: EODHD_API_KEY
+        - name: ALPHAVANTAGE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: data-api-secrets
+              key: ALPHAVANTAGE_API_KEY
+        - name: LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "1500m"
+          limits:
+            memory: "3Gi"
+            cpu: "2500m"

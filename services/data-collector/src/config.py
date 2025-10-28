@@ -22,16 +22,15 @@ class Settings(BaseSettings):
         description="PostgreSQL connection string",
     )
 
-    # Redis
-    redis_url: str = Field(
-        default="redis://redis:6379/0",
-        description="Redis connection string",
+    # API Keys (optional, for enhanced data)
+    eodhd_api_key: str = Field(
+        default="",
+        description="EODHD API key (primary data source)",
     )
 
-    # API Keys (optional, for enhanced data)
     alpha_vantage_api_key: str = Field(
         default="",
-        description="Alpha Vantage API key (optional)",
+        description="Alpha Vantage API key (fallback)",
     )
 
     # Logging
