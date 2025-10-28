@@ -1,0 +1,22 @@
+# Test Dockerfile for shared package
+# Tests that financial-screener package can be installed and imported
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy package files
+COPY pyproject.toml /app/
+COPY src/ /app/src/
+
+# Install the package
+RUN pip install --no-cache-dir -e .
+
+# Test basic imports
+RUN python3 -c "from financial_screener import get_settings; print('✓ Settings import works')"
+RUN python3 -c "from financial_screener.config import Settings; print('✓ Config module works')"
+RUN python3 -c "from financial_screener.database import get_sync_connection; print('✓ Database module works')"
+RUN python3 -c "from financial_screener.models import asset; print('✓ Models module works')"
+
+# Run a simple test
+CMD ["python3", "-c", "from financial_screener import get_settings; s = get_settings(); print(f'Package installed successfully! Version: {s.service_version}')"]
