@@ -18,15 +18,16 @@ Features:
   - Idempotent operations
   - Automatic completion detection
   - Progress tracking in metadata
+  - Configuration-driven resources and batch sizes
+  - Triggers technical indicators after successful load
 """
 
 from airflow import DAG
-from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
-from airflow.providers.cncf.kubernetes.secret import Secret
+from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator, BranchPythonOperator
 from airflow.operators.empty import EmptyOperator
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from datetime import datetime, timedelta
-from kubernetes.client import models as k8s
 import sys
 import os
 
@@ -63,29 +64,67 @@ dag = DAG(
     start_date=datetime(2025, 10, 27),
     catchup=False,
     max_active_runs=1,
-    tags=['data-collection', 'historical', 'equities', 'backfill'],
+    tags=['data-collection', 'historical', 'equities', 'backfill', 'config-driven'],
     doc_md=__doc__,
 )
 
 # =============================================================================
-# KUBERNETES SECRETS
+# CONFIGURATION LOADING
 # =============================================================================
 
-# PostgreSQL connection
-db_secret = Secret(
-    deploy_type='env',
-    deploy_target='DATABASE_URL',
-    secret='postgres-secret',
-    key='DATABASE_URL'
-)
+def load_dag_configuration(**context):
+    """
+    Load DAG configuration from database (dag_configuration table).
 
-# EODHD API key
-api_secret = Secret(
-    deploy_type='env',
-    deploy_target='EODHD_API_KEY',
-    secret='data-api-secrets',
-    key='EODHD_API_KEY'
-)
+    This replaces hardcoded values with database-driven configuration,
+    enabling runtime tuning without code changes.
+    """
+    import psycopg2
+    from airflow.hooks.base import BaseHook
+
+    conn_info = BaseHook.get_connection('postgres_default')
+    conn = psycopg2.connect(conn_info.get_uri())
+    cur = conn.cursor()
+
+    # Get exchange groups
+    cur.execute("""
+        SET search_path TO financial_screener;
+        SELECT group_name, display_name, exchanges, priority
+        FROM get_exchange_groups();
+    """)
+    groups = cur.fetchall()
+
+    # Get configuration for each group
+    configs = {}
+    for group in groups:
+        group_name = group[0]
+        cur.execute("""
+            SET search_path TO financial_screener;
+            SELECT cpu_request, cpu_limit, memory_request, memory_limit,
+                   batch_size, timeout_seconds, max_retries, retry_delay_minutes
+            FROM get_dag_config(%s, %s);
+        """, ('historical_load_equities', group_name))
+
+        config_row = cur.fetchone()
+        configs[group_name] = {
+            'exchanges': ','.join(group[2]),  # Join array to string
+            'cpu_request': config_row[0],
+            'cpu_limit': config_row[1],
+            'memory_request': config_row[2],
+            'memory_limit': config_row[3],
+            'batch_size': config_row[4],
+            'timeout_seconds': config_row[5],
+        }
+
+    conn.close()
+
+    # Push to XCom for downstream tasks
+    for group_name, config in configs.items():
+        context['ti'].xcom_push(key=f'config_{group_name}', value=config)
+
+    context['ti'].xcom_push(key='exchange_groups', value=[g[0] for g in groups])
+
+    return f"Loaded configuration for {len(configs)} exchange groups"
 
 # =============================================================================
 # TASK DEFINITIONS - INITIALIZATION
@@ -102,7 +141,24 @@ initialize_task = PythonOperator(
     """
 )
 
-# Task 2: Determine which month to load next
+# Task 2: Load configuration from database
+load_config_task = PythonOperator(
+    task_id='load_configuration',
+    python_callable=load_dag_configuration,
+    dag=dag,
+    doc_md="""
+    Loads DAG configuration from dag_configuration table.
+
+    Retrieves:
+    - Resource limits (CPU, memory) per exchange group
+    - Batch sizes per exchange group
+    - Timeout values per exchange group
+
+    Configuration stored in XCom for kubectl commands.
+    """
+)
+
+# Task 3: Determine which month to load next
 determine_month_task = PythonOperator(
     task_id='determine_next_month',
     python_callable=determine_next_month_to_load,
@@ -127,7 +183,7 @@ determine_month_task = PythonOperator(
     """
 )
 
-# Task 3: Check if historical load is complete
+# Task 4: Check if historical load is complete
 check_completion_task = BranchPythonOperator(
     task_id='check_completion',
     python_callable=check_completion_status,
@@ -158,120 +214,179 @@ process_task = EmptyOperator(
 )
 
 # =============================================================================
-# PARALLEL PROCESSING JOBS (BY EXCHANGE)
+# PARALLEL PROCESSING JOBS (BY EXCHANGE) - BASHOPERATOR VERSION
 # =============================================================================
 
-# Common Kubernetes pod configuration
-common_pod_config = {
-    'namespace': 'financial-screener',
-    'image': 'financial-data-collector:latest',
-    'image_pull_policy': 'Never',  # Use local images distributed via tar
-    'cmds': ['python', '/app/src/main_enhanced.py'],
-    'secrets': [db_secret, api_secret],
-    'get_logs': True,
-    'is_delete_operator_pod': True,
-    'in_cluster': True,
-    'service_account_name': 'default',
-    'container_resources': k8s.V1ResourceRequirements(
-        requests={"cpu": "500m", "memory": "1Gi"},
-        limits={"cpu": "2000m", "memory": "2Gi"}
-    ),
-}
+def create_kubectl_historical_command(pod_name_prefix, group_name, market_label):
+    """
+    Creates kubectl command for historical data loading using BashOperator.
+
+    This approach works reliably on ARM64 unlike KubernetesPodOperator.
+    Configuration values are loaded from database via XCom.
+
+    Args:
+        pod_name_prefix: Prefix for pod name
+        group_name: Exchange group name (for config lookup)
+        market_label: Market label for pod labels
+    """
+    return f"""
+# Create pod name from Airflow run_id (sanitized for Kubernetes)
+POD_NAME="{pod_name_prefix}-$(echo "{{{{ run_id }}}}" | tr '[:upper:]_:+.' '[:lower:]----')"
+
+echo "========================================="
+echo "Historical Load Pod: $POD_NAME"
+echo "Exchange Group: {group_name}"
+echo "========================================="
+
+# Get secrets from Kubernetes
+DB_URL=$(kubectl get secret postgres-secret -n financial-screener -o jsonpath='{{.data.DATABASE_URL}}' | base64 -d)
+API_KEY=$(kubectl get secret data-api-secrets -n financial-screener -o jsonpath='{{.data.EODHD_API_KEY}}' | base64 -d)
+
+# Get configuration from XCom (loaded from database)
+EXCHANGES="{{{{ ti.xcom_pull(task_ids='load_configuration', key='config_{group_name}')['exchanges'] }}}}"
+CPU_REQUEST="{{{{ ti.xcom_pull(task_ids='load_configuration', key='config_{group_name}')['cpu_request'] }}}}"
+CPU_LIMIT="{{{{ ti.xcom_pull(task_ids='load_configuration', key='config_{group_name}')['cpu_limit'] }}}}"
+MEMORY_REQUEST="{{{{ ti.xcom_pull(task_ids='load_configuration', key='config_{group_name}')['memory_request'] }}}}"
+MEMORY_LIMIT="{{{{ ti.xcom_pull(task_ids='load_configuration', key='config_{group_name}')['memory_limit'] }}}}"
+BATCH_SIZE="{{{{ ti.xcom_pull(task_ids='load_configuration', key='config_{group_name}')['batch_size'] }}}}"
+TIMEOUT="{{{{ ti.xcom_pull(task_ids='load_configuration', key='config_{group_name}')['timeout_seconds'] }}}}"
+
+# Get date range from determine_next_month task
+START_DATE="{{{{ ti.xcom_pull(task_ids='determine_next_month', key='start_date') }}}}"
+END_DATE="{{{{ ti.xcom_pull(task_ids='determine_next_month', key='end_date') }}}}"
+
+echo "Configuration loaded from database:"
+echo "  Exchanges: $EXCHANGES"
+echo "  CPU: $CPU_REQUEST - $CPU_LIMIT"
+echo "  Memory: $MEMORY_REQUEST - $MEMORY_LIMIT"
+echo "  Batch Size: $BATCH_SIZE"
+echo "  Timeout: $TIMEOUT seconds"
+echo "  Date Range: $START_DATE to $END_DATE"
+echo "========================================="
+
+# Create pod using kubectl run
+kubectl run $POD_NAME \\
+  --namespace=financial-screener \\
+  --image=financial-data-collector:latest \\
+  --image-pull-policy=Never \\
+  --restart=Never \\
+  --labels="app=data-collector,job-type=historical,market={market_label},dag_id={{{{ dag.dag_id }}}},task_id={{{{ task.task_id }}}},run_id={{{{ run_id }}}}" \\
+  --env="DATABASE_URL=$DB_URL" \\
+  --env="EODHD_API_KEY=$API_KEY" \\
+  --requests="cpu=$CPU_REQUEST,memory=$MEMORY_REQUEST" \\
+  --limits="cpu=$CPU_LIMIT,memory=$MEMORY_LIMIT" \\
+  -- python /app/src/main_enhanced.py \\
+     --execution-id "{{{{ run_id }}}}" \\
+     --exchanges "$EXCHANGES" \\
+     --mode historical \\
+     --start-date "$START_DATE" \\
+     --end-date "$END_DATE" \\
+     --skip-existing \\
+     --batch-size $BATCH_SIZE
+
+echo "Pod created. Waiting for completion (timeout: ${{TIMEOUT}}s)..."
+
+# Wait for pod to complete
+if kubectl wait --for=condition=complete pod/$POD_NAME -n financial-screener --timeout=${{TIMEOUT}}s; then
+    echo "========================================="
+    echo "✓ Pod completed successfully"
+    echo "========================================="
+
+    # Get and display logs
+    echo ""
+    echo "Pod Logs:"
+    kubectl logs $POD_NAME -n financial-screener
+
+    # Clean up pod
+    kubectl delete pod $POD_NAME -n financial-screener
+    echo ""
+    echo "✓ Pod cleaned up"
+    exit 0
+else
+    echo "========================================="
+    echo "✗ Pod failed or timed out"
+    echo "========================================="
+
+    # Get pod status for debugging
+    kubectl get pod $POD_NAME -n financial-screener -o yaml
+
+    # Get logs even if failed
+    echo ""
+    echo "Pod Logs:"
+    kubectl logs $POD_NAME -n financial-screener --tail=100
+
+    # Keep failed pod for debugging (don't delete)
+    echo ""
+    echo "⚠ Failed pod kept for debugging: $POD_NAME"
+    exit 1
+fi
+"""
 
 # Historical Load Job 1: US Markets (NYSE + NASDAQ)
-us_markets_historical = KubernetesPodOperator(
+us_markets_historical = BashOperator(
     task_id='load_us_markets_historical',
-    name='historical-us-{{ run_id | replace("_", "-") | replace(":", "-") | replace("+", "-") | replace(".", "-") | lower }}',
-    arguments=[
-        '--execution-id', '{{ run_id }}',
-        '--exchanges', 'NYSE,NASDAQ',
-        '--mode', 'historical',
-        '--start-date', '{{ ti.xcom_pull(task_ids="determine_next_month", key="start_date") }}',
-        '--end-date', '{{ ti.xcom_pull(task_ids="determine_next_month", key="end_date") }}',
-        '--skip-existing',
-        '--batch-size', '500',
-    ],
-    labels={
-        'app': 'data-collector',
-        'job-type': 'historical',
-        'market': 'us',
-        'dag_id': '{{ dag.dag_id }}',
-        'task_id': 'load_us_markets_historical',
-    },
+    bash_command=create_kubectl_historical_command(
+        pod_name_prefix='historical-us',
+        group_name='us_markets',
+        market_label='us'
+    ),
     dag=dag,
-    **common_pod_config
+    doc_md="""
+    Loads historical price data for US Markets (NYSE + NASDAQ).
+
+    Uses kubectl-based pod launcher (ARM64 compatible).
+    Configuration loaded from dag_configuration table.
+
+    Expected duration: Varies based on month size and ticker count.
+    """
 )
 
 # Historical Load Job 2: London Stock Exchange
-lse_historical = KubernetesPodOperator(
+lse_historical = BashOperator(
     task_id='load_lse_historical',
-    name='historical-lse-{{ run_id | replace("_", "-") | replace(":", "-") | replace("+", "-") | replace(".", "-") | lower }}',
-    arguments=[
-        '--execution-id', '{{ run_id }}',
-        '--exchanges', 'LSE',
-        '--mode', 'historical',
-        '--start-date', '{{ ti.xcom_pull(task_ids="determine_next_month", key="start_date") }}',
-        '--end-date', '{{ ti.xcom_pull(task_ids="determine_next_month", key="end_date") }}',
-        '--skip-existing',
-        '--batch-size', '500',
-    ],
-    labels={
-        'app': 'data-collector',
-        'job-type': 'historical',
-        'market': 'uk',
-        'dag_id': '{{ dag.dag_id }}',
-        'task_id': 'load_lse_historical',
-    },
+    bash_command=create_kubectl_historical_command(
+        pod_name_prefix='historical-lse',
+        group_name='lse',
+        market_label='uk'
+    ),
     dag=dag,
-    **common_pod_config
+    doc_md="""
+    Loads historical price data for London Stock Exchange.
+
+    Configuration loaded from dag_configuration table.
+    """
 )
 
 # Historical Load Job 3: German Markets (Frankfurt + Xetra)
-german_markets_historical = KubernetesPodOperator(
+german_markets_historical = BashOperator(
     task_id='load_german_markets_historical',
-    name='historical-de-{{ run_id | replace("_", "-") | replace(":", "-") | replace("+", "-") | replace(".", "-") | lower }}',
-    arguments=[
-        '--execution-id', '{{ run_id }}',
-        '--exchanges', 'FRANKFURT,XETRA',
-        '--mode', 'historical',
-        '--start-date', '{{ ti.xcom_pull(task_ids="determine_next_month", key="start_date") }}',
-        '--end-date', '{{ ti.xcom_pull(task_ids="determine_next_month", key="end_date") }}',
-        '--skip-existing',
-        '--batch-size', '500',
-    ],
-    labels={
-        'app': 'data-collector',
-        'job-type': 'historical',
-        'market': 'germany',
-        'dag_id': '{{ dag.dag_id }}',
-        'task_id': 'load_german_markets_historical',
-    },
+    bash_command=create_kubectl_historical_command(
+        pod_name_prefix='historical-de',
+        group_name='german_markets',
+        market_label='germany'
+    ),
     dag=dag,
-    **common_pod_config
+    doc_md="""
+    Loads historical price data for German Markets (Frankfurt + XETRA).
+
+    Configuration loaded from dag_configuration table.
+    """
 )
 
 # Historical Load Job 4: Other European Markets
-european_markets_historical = KubernetesPodOperator(
+european_markets_historical = BashOperator(
     task_id='load_european_markets_historical',
-    name='historical-eu-{{ run_id | replace("_", "-") | replace(":", "-") | replace("+", "-") | replace(".", "-") | lower }}',
-    arguments=[
-        '--execution-id', '{{ run_id }}',
-        '--exchanges', 'EURONEXT,BME,SIX',
-        '--mode', 'historical',
-        '--start-date', '{{ ti.xcom_pull(task_ids="determine_next_month", key="start_date") }}',
-        '--end-date', '{{ ti.xcom_pull(task_ids="determine_next_month", key="end_date") }}',
-        '--skip-existing',
-        '--batch-size', '500',
-    ],
-    labels={
-        'app': 'data-collector',
-        'job-type': 'historical',
-        'market': 'europe',
-        'dag_id': '{{ dag.dag_id }}',
-        'task_id': 'load_european_markets_historical',
-    },
+    bash_command=create_kubectl_historical_command(
+        pod_name_prefix='historical-eu',
+        group_name='european_markets',
+        market_label='europe'
+    ),
     dag=dag,
-    **common_pod_config
+    doc_md="""
+    Loads historical price data for Other European Markets (Euronext, BME, SIX).
+
+    Configuration loaded from dag_configuration table.
+    """
 )
 
 # =============================================================================
@@ -299,12 +414,28 @@ finalize_task = PythonOperator(
     """
 )
 
+# Task: Trigger technical indicators calculation
+trigger_indicators_task = TriggerDagRunOperator(
+    task_id='trigger_indicators',
+    trigger_dag_id='calculate_indicators',
+    wait_for_completion=False,
+    dag=dag,
+    doc_md="""
+    Triggers technical indicators calculation after successful historical load.
+
+    This ensures that newly loaded historical data gets technical indicators
+    calculated automatically, completing the full data pipeline.
+
+    Runs asynchronously (doesn't wait for completion).
+    """
+)
+
 # =============================================================================
 # TASK DEPENDENCIES
 # =============================================================================
 
 # Initialization chain
-initialize_task >> determine_month_task >> check_completion_task
+initialize_task >> load_config_task >> determine_month_task >> check_completion_task
 
 # Branch: Either complete or continue processing
 check_completion_task >> [complete_task, process_task]
@@ -328,6 +459,9 @@ process_task >> [
 # Complete path also goes to finalize (for cleanup)
 complete_task >> finalize_task
 
+# After finalization, trigger indicators calculation
+finalize_task >> trigger_indicators_task
+
 # =============================================================================
 # TASK FLOW DIAGRAM
 # =============================================================================
@@ -337,11 +471,13 @@ Task Flow:
 
 initialize_historical_load
     ↓
+load_configuration (from database)
+    ↓
 determine_next_month (query metadata)
     ↓
 check_completion (2 years loaded?)
     ↓
-    ├─[YES]→ historical_load_complete → finalize
+    ├─[YES]→ historical_load_complete → finalize → trigger_indicators
     │
     └─[NO]→ process_historical_data
               ↓
@@ -351,38 +487,46 @@ check_completion (2 years loaded?)
               └─→ load_european_markets_historical (Euronext, BME, SIX)
               ↓
            finalize_historical_load
+              ↓
+           trigger_indicators
 
-Example Run Sequence:
+Key Changes from Previous Version:
 
-Day 1:  Load Oct 2024 for all tickers  → 16,816 API calls
-Day 2:  Load Sep 2024 for all tickers  → 16,816 API calls
-Day 3:  Load Aug 2024 for all tickers  → 16,816 API calls
-...
-Day 24: Load Nov 2022 for all tickers  → 16,816 API calls
-Day 25: Check completion → Already have 2 years → DONE
+1. Migrated from KubernetesPodOperator to BashOperator + kubectl
+   - ARM64 compatible
+   - Matches data_collection_equities.py pattern
+   - More reliable on Raspberry Pi cluster
 
-Progress Tracking:
+2. Configuration-Driven Approach
+   - Reads resource limits from dag_configuration table
+   - Reads exchange groups from exchange_groups table
+   - Reads batch sizes from configuration
+   - No hardcoded values
 
-Query current status:
-SELECT
-    COUNT(*) as total_tickers,
-    MIN(prices_first_date) as oldest_data,
-    MAX(prices_first_date) as newest_first_date,
-    AVG(CURRENT_DATE - prices_first_date) as avg_depth_days
-FROM asset_processing_state
-WHERE prices_last_date IS NOT NULL;
+3. Indicators Integration
+   - Automatically triggers calculate_indicators DAG after completion
+   - Ensures full data pipeline (historical load → indicators)
+   - Async trigger (doesn't block finalization)
 
-API Usage per Run:
-- Tickers needing history: ~16,816
-- Calls per ticker: 1 (prices only, no fundamentals)
-- Total per run: ~16,816 calls
-- Daily collection: ~22,000 calls
-- Combined: ~39,000 calls/day (39% of quota)
+Configuration Management:
 
-Benefits of Reverse Chronological Loading:
-1. Most recent data loaded first (highest value)
-2. Usable dataset even if interrupted
-3. Can stop at any point (1 year, 18 months, etc.)
-4. Easier debugging (recent data more likely to be correct)
-5. Better user experience (can analyze recent trends immediately)
+To update resources for US markets historical load:
+  SELECT update_dag_config(
+      'historical_load_equities',
+      'us_markets',
+      p_cpu_limit => '3000m',
+      p_memory_limit => '4Gi',
+      p_batch_size => 750
+  );
+
+To add new exchange group:
+  INSERT INTO exchange_groups (group_name, display_name, exchanges, priority)
+  VALUES ('asian_markets', 'Asian Markets', ARRAY['TSE', 'HKEX'], 6);
+
+Benefits:
+- No code changes needed for resource tuning
+- Easy to add/modify exchange groups
+- Full audit trail of configuration changes
+- Consistent approach across all DAGs
+- Complete pipeline integration
 """
