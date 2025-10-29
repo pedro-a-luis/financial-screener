@@ -175,12 +175,12 @@ def determine_next_month_to_load(**context):
 
     start_date, end_date, tickers_count, target_month = asyncio.run(_determine_month())
 
-    # Push to XCom for downstream tasks
+    # Push to XCom for downstream tasks (Airflow 3.x doesn't accept None values)
     ti = context['ti']
-    ti.xcom_push(key='start_date', value=start_date)
-    ti.xcom_push(key='end_date', value=end_date)
-    ti.xcom_push(key='tickers_count', value=tickers_count)
-    ti.xcom_push(key='target_month', value=target_month)
+    ti.xcom_push(key='start_date', value=start_date or '')
+    ti.xcom_push(key='end_date', value=end_date or '')
+    ti.xcom_push(key='tickers_count', value=tickers_count if tickers_count is not None else 0)
+    ti.xcom_push(key='target_month', value=target_month or '')
 
     return {
         'start_date': start_date,
