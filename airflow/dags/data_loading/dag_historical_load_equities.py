@@ -80,10 +80,19 @@ def load_dag_configuration(**context):
     enabling runtime tuning without code changes.
     """
     import psycopg2
+    import os
     from airflow.hooks.base import BaseHook
 
-    conn_info = BaseHook.get_connection('postgres_default')
-    conn = psycopg2.connect(conn_info.get_uri())
+    # Try Airflow connection first, fall back to DATABASE_URL
+    try:
+        conn_info = BaseHook.get_connection('postgres_financial_screener')
+        conn = psycopg2.connect(conn_info.get_uri())
+    except:
+        database_url = os.getenv('DATABASE_URL')
+        if not database_url:
+            raise ValueError("No database connection available. Set DATABASE_URL or create Airflow connection 'postgres_financial_screener'")
+        conn = psycopg2.connect(database_url)
+
     cur = conn.cursor()
 
     # Get exchange groups
