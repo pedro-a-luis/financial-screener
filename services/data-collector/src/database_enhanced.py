@@ -247,3 +247,105 @@ async def upsert_complete_asset(
 
     logger.info("asset_upserted", ticker=ticker, asset_id=row["id"])
     return row["id"]
+
+
+async def upsert_news_article(
+    conn: asyncpg.Connection,
+    asset_id: int,
+    ticker: str,
+    article_data: Dict
+) -> Optional[int]:
+    """
+    Insert or update a news article (deduplicates by URL).
+
+    Args:
+        conn: Database connection
+        asset_id: ID from assets table
+        ticker: Stock ticker
+        article_data: News article from EODHD API
+
+    Returns:
+        int: article id, or None if error
+    """
+    try:
+        sentiment = article_data.get("sentiment", {})
+        
+        row = await conn.fetchrow(
+            """
+            INSERT INTO news_articles (
+                asset_id, ticker, title, content, url, 
+                published_date, tags, sentiment_score,
+                created_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+            ON CONFLICT (url) DO UPDATE SET
+                title = EXCLUDED.title,
+                content = EXCLUDED.content,
+                tags = EXCLUDED.tags,
+                sentiment_score = EXCLUDED.sentiment_score
+            RETURNING id
+            """,
+            asset_id,
+            ticker,
+            article_data.get("title"),
+            article_data.get("content"),
+            article_data.get("link"),  # URL for deduplication
+            datetime.fromisoformat(article_data.get("date").replace("+00:00", "")),
+            article_data.get("tags", []),
+            sentiment.get("polarity"),  # Main sentiment score
+        )
+        
+        return row["id"] if row else None
+        
+    except Exception as e:
+        logger.error("news_article_upsert_failed", ticker=ticker, error=str(e))
+        return None
+
+
+async def upsert_sentiment_score(
+    conn: asyncpg.Connection,
+    asset_id: int,
+    ticker: str,
+    sentiment_date: date,
+    normalized_score: float,
+    article_count: int
+) -> bool:
+    """
+    Insert or update daily sentiment score for a ticker.
+
+    Args:
+        conn: Database connection
+        asset_id: ID from assets table
+        ticker: Stock ticker
+        sentiment_date: Date of sentiment aggregation
+        normalized_score: Sentiment score (-1 to +1)
+        article_count: Number of articles used for sentiment
+
+    Returns:
+        bool: Success status
+    """
+    try:
+        await conn.execute(
+            """
+            INSERT INTO sentiment_summary (
+                asset_id, ticker, period_start, period_end,
+                avg_sentiment_score, total_articles,
+                period_type, created_at
+            )
+            VALUES ($1, $2, $3, $3, $4, $5, 'daily', NOW())
+            ON CONFLICT (ticker, period_start, period_type) DO UPDATE SET
+                avg_sentiment_score = EXCLUDED.avg_sentiment_score,
+                total_articles = EXCLUDED.total_articles
+            """,
+            asset_id,
+            ticker,
+            sentiment_date,
+            normalized_score,
+            article_count,
+        )
+        
+        return True
+        
+    except Exception as e:
+        logger.error("sentiment_upsert_failed", ticker=ticker, date=str(sentiment_date), error=str(e))
+        return False

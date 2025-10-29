@@ -1,0 +1,29 @@
+---
+# Velero PostgreSQL Backup Hooks for Airflow
+# This adds pre/post backup annotations to ensure transactional consistency
+# during Velero backups of the Airflow PostgreSQL database
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: airflow-postgresql-0
+  namespace: airflow
+  annotations:
+    # Pre-backup hook: Start PostgreSQL backup mode before Velero backs up the PVC
+    # This ensures the database is in a consistent state
+    pre.hook.backup.velero.io/command: '["/bin/bash", "-c", "echo ''Starting PostgreSQL backup mode...'' && psql -U postgres -c \"SELECT pg_start_backup(''velero-backup'', true);\" && echo ''PostgreSQL backup mode started''"]'
+    pre.hook.backup.velero.io/timeout: "30s"
+    pre.hook.backup.velero.io/on-error: "Fail"
+
+    # Post-backup hook: Stop PostgreSQL backup mode after Velero completes the PVC backup
+    # This releases the database from backup mode
+    post.hook.backup.velero.io/command: '["/bin/bash", "-c", "echo ''Stopping PostgreSQL backup mode...'' && psql -U postgres -c \"SELECT pg_stop_backup();\" && echo ''PostgreSQL backup mode stopped''"]'
+    post.hook.backup.velero.io/timeout: "30s"
+    post.hook.backup.velero.io/on-error: "Continue"
+
+spec:
+  # This is a placeholder spec - the actual pod is managed by the StatefulSet
+  # This file is used to patch the existing pod with the annotations
+  containers:
+  - name: postgres
+    image: postgres:16-alpine

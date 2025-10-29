@@ -1,0 +1,109 @@
+# Airflow Helm Values - Git-Sync Configuration
+# Enables automatic DAG synchronization from git repository
+
+# Executor configuration
+executor: LocalExecutor
+
+# PostgreSQL configuration
+postgresql:
+  enabled: true
+  image:
+    registry: docker.io
+    repository: library/postgres
+    tag: 16-alpine
+
+# Webserver configuration
+webserver:
+  defaultUser:
+    username: admin
+    password: admin123
+
+# Logs persistence (keep disabled for simplicity)
+logs:
+  persistence:
+    enabled: false
+
+# DAGs Git-Sync Configuration
+dags:
+  # Enable git-sync
+  gitSync:
+    enabled: true
+
+    # Git repository configuration
+    repo: https://github.com/pedro-a-luis/financial-screener.git
+    branch: main
+    rev: HEAD
+
+    # Sync interval (in seconds)
+    wait: 60  # Check for updates every 60 seconds
+
+    # Subdirectory within repo where DAGs are located
+    subPath: "airflow/dags"
+
+    # Git-sync depth (shallow clone)
+    depth: 1
+
+    # Max sync failures before giving up
+    maxFailures: 0
+
+    # Resources for git-sync sidecar
+    resources:
+      limits:
+        cpu: 100m
+        memory: 128Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi
+
+  # Persistence configuration (git-sync manages the volume)
+  persistence:
+    enabled: true
+    size: 1Gi
+    accessMode: ReadWriteMany
+    storageClassName: longhorn
+
+# Additional environment variables if needed
+env:
+  - name: AIRFLOW__CORE__LOAD_EXAMPLES
+    value: "False"
+  - name: AIRFLOW__CORE__DAGS_FOLDER
+    value: "/opt/airflow/dags/repo/airflow/dags"
+
+# Scheduler configuration
+scheduler:
+  # Restart scheduler to pick up new DAGs quickly
+  livenessProbe:
+    periodSeconds: 30
+
+  # Resources
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+
+# DAG Processor configuration
+dagProcessor:
+  enabled: true
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+
+# Webserver resources
+webserver:
+  defaultUser:
+    username: admin
+    password: admin123
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi

@@ -1,0 +1,49 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: comprehensive-fundamentals-refresh
+  namespace: financial-screener
+  labels:
+    app: data-collector
+    job-type: fundamentals
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 86400  # Clean up after 24 hours
+  template:
+    metadata:
+      labels:
+        app: data-collector
+        job: comprehensive-fundamentals
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: data-collector
+        image: financial-data-collector:latest
+        imagePullPolicy: Never
+        command:
+          - python3
+          - /app/src/main_enhanced.py
+          - --mode
+          - bulk
+          - --exchanges
+          - NYSE,NASDAQ,LSE,BME,EURONEXT,FRANKFURT,SIX
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: DATABASE_URL
+        - name: EODHD_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: data-api-secrets
+              key: EODHD_API_KEY
+        - name: LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"

@@ -1,21 +1,24 @@
 # Technical Analyzer Service - Python Dependencies
 
 # Data manipulation
-pandas>=2.0.0
-numpy>=1.24.0
-
-# Technical indicators library (comprehensive)
-pandas-ta>=0.3.14b0
+pandas==2.0.3
+numpy==1.24.4
 
 # Database
-asyncpg>=0.29.0
-psycopg2-binary>=2.9.9
+asyncpg==0.29.0
+psycopg2-binary==2.9.9
 
 # Configuration
-python-dotenv>=1.0.0
+python-dotenv==1.0.0
+pydantic==2.10.3
+pydantic-settings==2.6.1
 
 # Logging
-structlog>=23.1.0
+structlog==24.4.0
 
 # Redis for caching
-redis>=5.0.0
+redis==5.0.0
+
+# Technical indicators library
+# pandas-ta must be installed from GitHub (official repo)
+git+https://github.com/twopirllc/pandas-ta

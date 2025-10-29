@@ -417,3 +417,129 @@ class EODHDFetcher:
         except Exception as e:
             logger.error("eodhd_fundamentals_failed", ticker=ticker, error=str(e))
             return None
+
+    async def fetch_news(
+        self, ticker: str, from_date: date, to_date: date, limit: int = 50
+    ) -> List[Dict]:
+        """
+        Fetch financial news articles for a ticker with sentiment analysis.
+
+        API endpoint: GET /news
+        Params: s=TICKER, from=YYYY-MM-DD, to=YYYY-MM-DD, limit, api_token, fmt=json
+
+        Args:
+            ticker: Stock symbol (e.g., AAPL.US)
+            from_date: Start date for news
+            to_date: End date for news
+            limit: Max articles to return (default: 50, max: 1000)
+
+        Returns:
+            List of news articles with sentiment data
+        """
+        try:
+            normalized_ticker = self._normalize_ticker(ticker)
+            await self._rate_limit()
+
+            url = f"{self.base_url}/news"
+            params = {
+                "s": normalized_ticker,
+                "from": from_date.strftime("%Y-%m-%d"),
+                "to": to_date.strftime("%Y-%m-%d"),
+                "limit": min(limit, 1000),
+                "api_token": self.api_key,
+                "fmt": "json",
+            }
+
+            response = requests.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+
+            if isinstance(data, dict) and "error" in data:
+                logger.error("eodhd_news_error", ticker=ticker, error=data["error"])
+                return []
+
+            if not isinstance(data, list):
+                logger.warning("unexpected_news_response", ticker=ticker)
+                return []
+
+            logger.info(
+                "eodhd_news_fetched",
+                ticker=ticker,
+                count=len(data),
+                from_date=str(from_date),
+                to_date=str(to_date),
+            )
+
+            return data
+
+        except Exception as e:
+            logger.error("eodhd_news_failed", ticker=ticker, error=str(e))
+            return []
+
+    async def fetch_sentiment(
+        self, tickers: List[str], from_date: date, to_date: date
+    ) -> Dict[str, List[Dict]]:
+        """
+        Fetch aggregated sentiment scores for multiple tickers.
+
+        API endpoint: GET /sentiments
+        Params: s=TICKER1,TICKER2,..., from=YYYY-MM-DD, to=YYYY-MM-DD, api_token, fmt=json
+
+        Sentiment scores range from -1 (very negative) to +1 (very positive).
+        Can batch up to 100 tickers per call for efficiency.
+
+        Args:
+            tickers: List of stock symbols (max 100 per call)
+            from_date: Start date
+            to_date: End date
+
+        Returns:
+            Dict mapping ticker to list of daily sentiment scores
+            Example: {"AAPL.US": [{"date": "2025-10-28", "count": 31, "normalized": 0.1835}, ...]}
+        """
+        try:
+            if not tickers:
+                return {}
+
+            # Normalize tickers and batch (max 100 per call)
+            normalized_tickers = [self._normalize_ticker(t) for t in tickers[:100]]
+            tickers_param = ",".join(normalized_tickers)
+
+            await self._rate_limit()
+
+            url = f"{self.base_url}/sentiments"
+            params = {
+                "s": tickers_param,
+                "from": from_date.strftime("%Y-%m-%d"),
+                "to": to_date.strftime("%Y-%m-%d"),
+                "api_token": self.api_key,
+                "fmt": "json",
+            }
+
+            response = requests.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+
+            if isinstance(data, dict) and "error" in data:
+                logger.error("eodhd_sentiment_error", error=data["error"])
+                return {}
+
+            if not isinstance(data, dict):
+                logger.warning("unexpected_sentiment_response")
+                return {}
+
+            # Log how many tickers returned data
+            tickers_with_data = len([k for k in data.keys() if data[k]])
+            logger.info(
+                "eodhd_sentiment_fetched",
+                tickers_requested=len(normalized_tickers),
+                tickers_with_data=tickers_with_data,
+                from_date=str(from_date),
+                to_date=str(to_date),
+            )
+
+            return data
+
+        except Exception as e:
+            logger.error("eodhd_sentiment_failed", error=str(e))
+            return {}

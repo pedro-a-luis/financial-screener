@@ -185,12 +185,22 @@ class TechnicalIndicatorCalculator:
 
     def _calculate_dmi(self, df: pd.DataFrame) -> Dict:
         """Directional Movement Index and ADX."""
-        adx_data = ta.adx(df['high'], df['low'], df['close'])
-        return {
-            'dmi_plus': float(adx_data['DMp_14'].iloc[-1]) if not pd.isna(adx_data['DMp_14'].iloc[-1]) else None,
-            'dmi_minus': float(adx_data['DMn_14'].iloc[-1]) if not pd.isna(adx_data['DMn_14'].iloc[-1]) else None,
-            'adx': float(adx_data['ADX_14'].iloc[-1]) if not pd.isna(adx_data['ADX_14'].iloc[-1]) else None,
-        }
+        try:
+            adx_data = ta.adx(df['high'], df['low'], df['close'])
+
+            # pandas-ta may return different column names, find them dynamically
+            dmi_plus_col = [col for col in adx_data.columns if 'DMP' in col or 'DMp' in col][0] if any('DMP' in col or 'DMp' in col for col in adx_data.columns) else None
+            dmi_minus_col = [col for col in adx_data.columns if 'DMN' in col or 'DMn' in col][0] if any('DMN' in col or 'DMn' in col for col in adx_data.columns) else None
+            adx_col = [col for col in adx_data.columns if 'ADX' in col][0] if any('ADX' in col for col in adx_data.columns) else None
+
+            return {
+                'dmi_plus': float(adx_data[dmi_plus_col].iloc[-1]) if dmi_plus_col and not pd.isna(adx_data[dmi_plus_col].iloc[-1]) else None,
+                'dmi_minus': float(adx_data[dmi_minus_col].iloc[-1]) if dmi_minus_col and not pd.isna(adx_data[dmi_minus_col].iloc[-1]) else None,
+                'adx': float(adx_data[adx_col].iloc[-1]) if adx_col and not pd.isna(adx_data[adx_col].iloc[-1]) else None,
+            }
+        except Exception as e:
+            logger.warning("dmi_calculation_failed", error=str(e))
+            return {'dmi_plus': None, 'dmi_minus': None, 'adx': None}
 
     def _calculate_parabolic_sar(self, df: pd.DataFrame) -> Optional[float]:
         """Parabolic SAR."""

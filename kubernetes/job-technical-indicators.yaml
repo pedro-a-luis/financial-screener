@@ -1,0 +1,96 @@
+---
+# Job: Technical Indicators Calculator
+# Calculates technical indicators for all assets with price data
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: technical-indicators
+  namespace: financial-screener
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: technical-analyzer
+        batch: indicators
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: technical-analyzer
+        image: technical-analyzer:latest
+        imagePullPolicy: Never  # Using local registry
+        command:
+        - python
+        - /app/src/main_indicators.py
+        - --skip-existing
+        - --batch-size
+        - "1000"
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: DATABASE_URL
+        - name: DATABASE_SCHEMA
+          value: "financial_screener"
+        - name: REDIS_URL
+          value: "redis://redis.redis.svc.cluster.local:6379/0"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: MIN_PRICE_DAYS
+          value: "252"
+        - name: MAX_PRICE_DAYS
+          value: "500"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+---
+# Test Job: Technical Indicators - Sample Tickers
+# Tests indicator calculation with 10 sample stocks
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: test-technical-indicators
+  namespace: financial-screener
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app: technical-analyzer
+        batch: test-indicators
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: technical-analyzer
+        image: technical-analyzer:latest
+        imagePullPolicy: Never
+        command:
+        - python
+        - /app/src/main_indicators.py
+        - --tickers
+        - AAPL,MSFT,GOOGL,AMZN,TSLA,NVDA,META,BRK-B,JPM,V
+        - --force
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: DATABASE_URL
+        - name: DATABASE_SCHEMA
+          value: "financial_screener"
+        - name: REDIS_URL
+          value: "redis://redis.redis.svc.cluster.local:6379/0"
+        - name: LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
