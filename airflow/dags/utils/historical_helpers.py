@@ -5,6 +5,7 @@ Support functions for reverse chronological historical data loading
 
 import asyncio
 import asyncpg
+import json
 from datetime import datetime, date, timedelta
 from dateutil.relativedelta import relativedelta
 from typing import Dict, List, Tuple, Optional
@@ -56,12 +57,12 @@ def initialize_historical_execution(**context):
                     parameters,
                     status,
                     started_at
-                ) VALUES ($1, $2, $3, $4, $5)
+                ) VALUES ($1, $2, $3::jsonb, $4, $5)
                 ON CONFLICT (execution_id) DO UPDATE
                 SET started_at = EXCLUDED.started_at,
                     parameters = EXCLUDED.parameters
             """, execution_id, 'historical_load',
-                {'execution_date': str(execution_date), 'dag_id': dag_id},
+                json.dumps({'execution_date': str(execution_date), 'dag_id': dag_id}),
                 'running', datetime.now())
 
             logger.info("historical_execution_initialized",
