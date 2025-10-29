@@ -41,7 +41,7 @@ def initialize_historical_execution(**context):
     """
     execution_id = context['run_id']
     dag_id = context['dag'].dag_id
-    execution_date = context['execution_date']
+    execution_date = context.get('logical_date') or context.get('execution_date')  # Airflow 3.x uses logical_date
 
     async def _initialize():
         conn = await get_db_connection()
