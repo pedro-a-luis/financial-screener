@@ -39,14 +39,12 @@ def initialize_historical_execution(**context):
     Creates a process_executions record to track this historical load run.
     Returns execution_id (Airflow run_id) for downstream tasks.
     """
-    from .database_utils import get_database_url
-
     execution_id = context['run_id']
     dag_id = context['dag'].dag_id
     execution_date = context['execution_date']
 
     async def _initialize():
-        conn = await get_db_connection(get_database_url())
+        conn = await get_db_connection()
         try:
             await conn.execute("SET search_path TO financial_screener")
 
@@ -94,13 +92,11 @@ def determine_next_month_to_load(**context):
         tickers_count: Number of tickers to process
         target_month: Month being loaded (YYYY-MM)
     """
-    from .database_utils import get_database_url
-
     dag_run_conf = context.get('dag_run').conf or {}
     target_years = dag_run_conf.get('target_years', 2)  # Default: 2 years
 
     async def _determine_month():
-        conn = await get_db_connection(get_database_url())
+        conn = await get_db_connection()
         try:
             await conn.execute("SET search_path TO financial_screener")
 
@@ -198,8 +194,6 @@ def check_completion_status(**context):
         'historical_load_complete': If target reached
         'process_historical_data': If more data needed
     """
-    from .database_utils import get_database_url
-
     dag_run_conf = context.get('dag_run').conf or {}
     target_years = dag_run_conf.get('target_years', 2)
 
@@ -214,7 +208,7 @@ def check_completion_status(**context):
         return 'historical_load_complete'
 
     async def _check_completion():
-        conn = await get_db_connection(get_database_url())
+        conn = await get_db_connection()
         try:
             await conn.execute("SET search_path TO financial_screener")
 
@@ -271,8 +265,6 @@ def finalize_historical_execution(**context):
     - Completion status
     - Progress toward target
     """
-    from .database_utils import get_database_url
-
     execution_id = context['run_id']
     ti = context['ti']
 
@@ -283,7 +275,7 @@ def finalize_historical_execution(**context):
     target_month = ti.xcom_pull(task_ids='determine_next_month', key='target_month')
 
     async def _finalize():
-        conn = await get_db_connection(get_database_url())
+        conn = await get_db_connection()
         try:
             await conn.execute("SET search_path TO financial_screener")
 
@@ -395,10 +387,8 @@ def get_historical_progress_report(**context):
     - Estimated days remaining
     - API calls used so far
     """
-    from .database_utils import get_database_url
-
     async def _get_report():
-        conn = await get_db_connection(get_database_url())
+        conn = await get_db_connection()
         try:
             await conn.execute("SET search_path TO financial_screener")
 
