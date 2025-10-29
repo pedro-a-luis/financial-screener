@@ -5,6 +5,10 @@ Refreshes comprehensive fundamental data for ALL tickers quarterly.
 Fundamental data (company info, financials, earnings) changes less frequently
 than price data, so quarterly updates are sufficient.
 
+Mode Strategy:
+- FIRST RUN: Uses 'bulk' mode (2 years prices + fundamentals)
+- SUBSEQUENT RUNS: Change to 'incremental' mode (delta prices + fundamentals refresh)
+
 Schedule: First day of each quarter at 02:00 UTC (Jan 1, Apr 1, Jul 1, Oct 1)
 Features:
   - Comprehensive EODHD fundamental data (13 sections, 100+ fields)
