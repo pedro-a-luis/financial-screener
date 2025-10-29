@@ -366,7 +366,21 @@ class EODHDFetcher:
 
     async def fetch_fundamentals(self, ticker: str) -> Optional[Dict]:
         """
-        Fetch fundamental data for a stock.
+        Fetch COMPREHENSIVE fundamental data for a stock.
+
+        This method fetches ALL available fundamental data from EODHD API including:
+        - General: Company info, officers, sector, description, address, employees
+        - Highlights: Key valuation metrics
+        - Valuation: All valuation ratios
+        - SharesStats: Outstanding shares, float, insider/institutional ownership
+        - Technicals: 52-week ranges, moving averages, beta, short interest
+        - SplitsDividends: Complete dividend and split history
+        - AnalystRatings: Consensus ratings and target prices
+        - Holders: Top institutional and fund holders
+        - InsiderTransactions: Form 4 filings
+        - ESGScores: Environmental, social, governance metrics
+        - Earnings: Historical earnings and estimates
+        - Financials: 20+ years of Balance Sheet, Income Statement, Cash Flow (quarterly + yearly)
 
         API endpoint: GET /fundamentals/{TICKER}.{EXCHANGE}
         Params: api_token=API_KEY, fmt=json
@@ -375,95 +389,31 @@ class EODHDFetcher:
             ticker: Stock symbol
 
         Returns:
-            Dictionary of fundamental metrics
+            Dictionary with comprehensive fundamental data ready for assets table storage
+            Returns None if fetch fails
         """
         try:
-            normalized_ticker = self._normalize_ticker(ticker)
+            # Fetch complete EODHD data
+            complete_data = await self.fetch_complete_asset_data(ticker)
 
-            await self._rate_limit()
-
-            url = f"{self.base_url}/fundamentals/{normalized_ticker}"
-            params = {
-                "api_token": self.api_key,
-                "fmt": "json",
-            }
-
-            response = requests.get(url, params=params, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-
-            if isinstance(data, dict) and "error" in data:
-                logger.error("eodhd_fundamentals_error", ticker=ticker, error=data["error"])
+            if not complete_data:
+                logger.warning("eodhd_no_fundamental_data", ticker=ticker)
                 return None
 
-            # Extract fundamental metrics from EODHD format
-            highlights = data.get("Highlights", {})
-            valuation = data.get("Valuation", {})
-            technicals = data.get("Technicals", {})
-            financials = data.get("Financials", {})
-            balance_sheet = financials.get("Balance_Sheet", {}).get("yearly", {})
-            income_statement = financials.get("Income_Statement", {}).get("yearly", {})
-            cash_flow = financials.get("Cash_Flow", {}).get("yearly", {})
+            # Extract ALL metadata using existing comprehensive method
+            asset_metadata = self.extract_asset_metadata(complete_data, ticker)
 
-            # Get most recent financial data
-            latest_bs = balance_sheet.get(list(balance_sheet.keys())[0], {}) if balance_sheet else {}
-            latest_is = income_statement.get(list(income_statement.keys())[0], {}) if income_statement else {}
-            latest_cf = cash_flow.get(list(cash_flow.keys())[0], {}) if cash_flow else {}
+            # Log what sections were retrieved
+            sections_retrieved = [k for k in complete_data.keys() if complete_data.get(k)]
+            logger.info(
+                "eodhd_comprehensive_fundamentals_fetched",
+                ticker=ticker,
+                sections=sections_retrieved,
+                total_sections=len(sections_retrieved)
+            )
 
-            fundamentals = {
-                "period_end_date": date.today(),
-                "period_type": "annual",
-                # Valuation
-                "market_cap": self._safe_float(highlights.get("MarketCapitalization")),
-                "enterprise_value": self._safe_float(highlights.get("EnterpriseValue")),
-                "pe_ratio": self._safe_float(highlights.get("PERatio")),
-                "pb_ratio": self._safe_float(highlights.get("PriceBookMRQ")),
-                "ps_ratio": self._safe_float(highlights.get("PriceSalesTTM")),
-                "peg_ratio": self._safe_float(highlights.get("PEGRatio")),
-                "ev_ebitda": self._safe_float(highlights.get("EnterpriseValueEbitda")),
-                # Profitability
-                "gross_margin": self._safe_float(highlights.get("GrossMarginTTM")),
-                "operating_margin": self._safe_float(highlights.get("OperatingMarginTTM")),
-                "profit_margin": self._safe_float(highlights.get("ProfitMargin")),
-                "roe": self._safe_float(highlights.get("ReturnOnEquityTTM")),
-                "roa": self._safe_float(highlights.get("ReturnOnAssetsTTM")),
-                # Financial health
-                "current_ratio": self._safe_float(technicals.get("CurrentRatio")),
-                "debt_to_equity": self._safe_float(highlights.get("DebtToEquity")),
-                # Revenue and earnings
-                "revenue": self._safe_float(latest_is.get("totalRevenue")),
-                "gross_profit": self._safe_float(latest_is.get("grossProfit")),
-                "ebitda": self._safe_float(highlights.get("EBITDA")),
-                "net_income": self._safe_float(latest_is.get("netIncome")),
-                "eps": self._safe_float(highlights.get("EarningsPerShareTTM")),
-                # Cash flow
-                "operating_cash_flow": self._safe_float(latest_cf.get("totalCashFromOperatingActivities")),
-                "free_cash_flow": self._safe_float(latest_cf.get("freeCashFlow")),
-                # Growth
-                "revenue_growth": self._safe_float(highlights.get("RevenuePerShareTTM")),
-                "earnings_growth": self._safe_float(highlights.get("QuarterlyEarningsGrowthYOY")),
-                # Dividend
-                "dividend_yield": self._safe_float(highlights.get("DividendYield")),
-                "dividend_per_share": self._safe_float(highlights.get("DividendPerShareTTM")),
-                "payout_ratio": self._safe_float(highlights.get("PayoutRatio")),
-            }
-
-            # Remove None values
-            fundamentals = {k: v for k, v in fundamentals.items() if v is not None}
-
-            logger.info("eodhd_fundamentals_fetched", ticker=ticker, metrics=len(fundamentals))
-
-            return fundamentals
+            return asset_metadata
 
         except Exception as e:
             logger.error("eodhd_fundamentals_failed", ticker=ticker, error=str(e))
-            return None
-
-    def _safe_float(self, value) -> Optional[float]:
-        """Safely convert value to float."""
-        if value is None or value == "None" or value == "":
-            return None
-        try:
-            return float(value)
-        except (ValueError, TypeError):
             return None
