@@ -5,7 +5,7 @@ Intelligent quota management and batch size adjustment
 
 from typing import Dict, Tuple, Optional
 import structlog
-from .database_utils import get_db_cursor, execute_query
+from utils.database_utils import get_db_cursor, execute_query
 
 logger = structlog.get_logger()
 
