@@ -17,7 +17,7 @@ import structlog
 
 from config import Settings
 from database import DatabaseManager
-from database_enhanced import upsert_complete_asset
+from database_enhanced import upsert_complete_asset, upsert_news_article, upsert_sentiment_score
 from fetchers import EODHDFetcher
 from metadata_logger import MetadataLogger
 
@@ -268,6 +268,205 @@ async def process_batch(
     return {"total": len(tickers), "successes": successes, "failures": failures}
 
 
+async def fetch_news_for_ticker(
+    ticker: str,
+    db: DatabaseManager,
+    fetcher: EODHDFetcher,
+    start_date: date,
+    end_date: date,
+    metadata_logger: MetadataLogger = None,
+    execution_id: str = None,
+) -> bool:
+    """
+    Fetch news articles for a ticker and store them with sentiment data.
+
+    Args:
+        ticker: Stock symbol
+        db: Database manager
+        fetcher: EODHD fetcher
+        start_date: Start date for news fetch
+        end_date: End date for news fetch
+        metadata_logger: MetadataLogger instance for tracking
+        execution_id: Airflow DAG run_id
+
+    Returns:
+        bool: Success status
+    """
+    start_time = datetime.now()
+    operation = 'news_collection'
+
+    try:
+        logger.info("fetching_news", ticker=ticker, start_date=str(start_date), end_date=str(end_date))
+
+        # Fetch news articles
+        articles = await fetcher.fetch_news(ticker, start_date, end_date, limit=100)
+
+        if not articles:
+            logger.info("no_news_articles", ticker=ticker)
+            return True  # Not a failure, just no news
+
+        # Get asset_id for the ticker
+        async with db.pool.acquire() as conn:
+            await conn.execute("SET search_path TO financial_screener")
+
+            # Get or create asset
+            row = await conn.fetchrow(
+                "SELECT id FROM assets WHERE ticker = $1 LIMIT 1",
+                ticker
+            )
+
+            if not row:
+                logger.warning("ticker_not_in_database_skipping_news", ticker=ticker)
+                return False
+
+            asset_id = row['id']
+
+            # Store each article
+            stored_count = 0
+            for article in articles:
+                article_id = await upsert_news_article(conn, asset_id, ticker, article)
+                if article_id:
+                    stored_count += 1
+
+        logger.info("news_stored", ticker=ticker, articles_fetched=len(articles), articles_stored=stored_count)
+
+        # Update metadata on success
+        if metadata_logger and execution_id:
+            await metadata_logger.log_operation(
+                execution_id,
+                ticker,
+                operation,
+                'success',
+                start_time,
+                records_inserted=stored_count,
+                api_calls_used=1
+            )
+
+        return True
+
+    except Exception as e:
+        logger.error("fetch_news_failed", ticker=ticker, error=str(e), exc_info=True)
+
+        # Update metadata on failure
+        if metadata_logger and execution_id:
+            await metadata_logger.log_operation(
+                execution_id,
+                ticker,
+                operation,
+                'failed',
+                start_time,
+                error_message=str(e)
+            )
+
+        return False
+
+
+async def fetch_sentiment_for_tickers(
+    tickers: List[str],
+    db: DatabaseManager,
+    fetcher: EODHDFetcher,
+    start_date: date,
+    end_date: date,
+    metadata_logger: MetadataLogger = None,
+    execution_id: str = None,
+) -> bool:
+    """
+    Fetch aggregated sentiment scores for multiple tickers (batched API call).
+
+    The EODHD sentiment API supports batching up to 100 tickers per call for efficiency.
+
+    Args:
+        tickers: List of stock symbols (up to 100)
+        db: Database manager
+        fetcher: EODHD fetcher
+        start_date: Start date for sentiment fetch
+        end_date: End date for sentiment fetch
+        metadata_logger: MetadataLogger instance for tracking
+        execution_id: Airflow DAG run_id
+
+    Returns:
+        bool: Success status
+    """
+    start_time = datetime.now()
+    operation = 'sentiment_collection'
+
+    try:
+        logger.info("fetching_sentiment", ticker_count=len(tickers), start_date=str(start_date), end_date=str(end_date))
+
+        # Fetch sentiment data (batched call)
+        sentiment_data = await fetcher.fetch_sentiment(tickers, start_date, end_date)
+
+        if not sentiment_data:
+            logger.info("no_sentiment_data", ticker_count=len(tickers))
+            return True  # Not a failure, just no data
+
+        async with db.pool.acquire() as conn:
+            await conn.execute("SET search_path TO financial_screener")
+
+            total_stored = 0
+
+            # Process each ticker's sentiment scores
+            for ticker, daily_scores in sentiment_data.items():
+                # Get asset_id for the ticker
+                row = await conn.fetchrow(
+                    "SELECT id FROM assets WHERE ticker = $1 LIMIT 1",
+                    ticker
+                )
+
+                if not row:
+                    logger.warning("ticker_not_in_database_skipping_sentiment", ticker=ticker)
+                    continue
+
+                asset_id = row['id']
+
+                # Store each daily sentiment score
+                for score_data in daily_scores:
+                    sentiment_date = datetime.strptime(score_data['date'], "%Y-%m-%d").date()
+                    success = await upsert_sentiment_score(
+                        conn,
+                        asset_id,
+                        ticker,
+                        sentiment_date,
+                        score_data['normalized'],
+                        score_data['count']
+                    )
+                    if success:
+                        total_stored += 1
+
+        logger.info("sentiment_stored", ticker_count=len(tickers), scores_stored=total_stored)
+
+        # Update metadata on success
+        if metadata_logger and execution_id:
+            # Log one operation per batch (not per ticker)
+            await metadata_logger.log_operation(
+                execution_id,
+                f"batch_{len(tickers)}_tickers",
+                operation,
+                'success',
+                start_time,
+                records_inserted=total_stored,
+                api_calls_used=1  # Batched call
+            )
+
+        return True
+
+    except Exception as e:
+        logger.error("fetch_sentiment_failed", ticker_count=len(tickers), error=str(e), exc_info=True)
+
+        # Update metadata on failure
+        if metadata_logger and execution_id:
+            await metadata_logger.log_operation(
+                execution_id,
+                f"batch_{len(tickers)}_tickers",
+                operation,
+                'failed',
+                start_time,
+                error_message=str(e)
+            )
+
+        return False
+
+
 def read_exchange_ticker_manifest(exchange_code: str) -> List[str]:
     """
     Read ticker symbols from exchange-specific manifest file.
@@ -364,9 +563,9 @@ async def main():
     parser = argparse.ArgumentParser(description="Enhanced Financial Data Collector")
     parser.add_argument(
         "--mode",
-        choices=["bulk", "incremental", "single", "auto", "historical"],
+        choices=["bulk", "incremental", "single", "auto", "historical", "news", "sentiment"],
         default="incremental",
-        help="Fetch mode: bulk (2 years), incremental (delta), auto (detect), single (one ticker), historical (custom date range)",
+        help="Fetch mode: bulk (2 years), incremental (delta), auto (detect), single (one ticker), historical (custom date range), news (articles), sentiment (scores)",
     )
     parser.add_argument(
         "--tickers", type=str, help="Comma-separated list of tickers (e.g., AAPL,MSFT)"
@@ -455,27 +654,82 @@ async def main():
             ticker_count=len(tickers),
         )
 
-        # Process in batches
+        # Determine date range for news/sentiment modes
+        if args.mode in ["news", "sentiment"]:
+            if not (start_date_override and end_date_override):
+                logger.error("--start-date and --end-date required for news/sentiment modes")
+                sys.exit(1)
+
+        # Process based on mode
         batch_size = args.batch_size
         total_stats = {"total": 0, "successes": 0, "failures": 0}
 
-        for i in range(0, len(tickers), batch_size):
-            batch = tickers[i : i + batch_size]
+        if args.mode == "news":
+            # News mode: process each ticker individually
+            for i in range(0, len(tickers), batch_size):
+                batch = tickers[i : i + batch_size]
+                logger.info("processing_news_batch", batch_num=i // batch_size + 1, ticker_count=len(batch))
 
-            logger.info("processing_batch", batch_num=i // batch_size + 1)
+                # Process tickers in parallel
+                tasks = [
+                    fetch_news_for_ticker(
+                        ticker, db, fetcher,
+                        start_date_override, end_date_override,
+                        metadata_logger, args.execution_id
+                    )
+                    for ticker in batch
+                ]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            stats = await process_batch(
-                batch, db, fetcher, args.mode,
-                metadata_logger, args.execution_id, args.skip_existing,
-                start_date_override, end_date_override
-            )
+                successes = sum(1 for r in results if r is True)
+                total_stats["total"] += len(batch)
+                total_stats["successes"] += successes
+                total_stats["failures"] += len(batch) - successes
 
-            total_stats["total"] += stats["total"]
-            total_stats["successes"] += stats["successes"]
-            total_stats["failures"] += stats["failures"]
+                await asyncio.sleep(2)
 
-            # Small delay between batches
-            await asyncio.sleep(2)
+        elif args.mode == "sentiment":
+            # Sentiment mode: batch API calls (100 tickers per call)
+            sentiment_batch_size = 100  # EODHD API limit
+
+            for i in range(0, len(tickers), sentiment_batch_size):
+                batch = tickers[i : i + sentiment_batch_size]
+                logger.info("processing_sentiment_batch", batch_num=i // sentiment_batch_size + 1, ticker_count=len(batch))
+
+                # Fetch sentiment for batch (single API call)
+                success = await fetch_sentiment_for_tickers(
+                    batch, db, fetcher,
+                    start_date_override, end_date_override,
+                    metadata_logger, args.execution_id
+                )
+
+                total_stats["total"] += len(batch)
+                if success:
+                    total_stats["successes"] += len(batch)
+                else:
+                    total_stats["failures"] += len(batch)
+
+                await asyncio.sleep(2)
+
+        else:
+            # Standard modes: bulk, incremental, single, auto, historical
+            for i in range(0, len(tickers), batch_size):
+                batch = tickers[i : i + batch_size]
+
+                logger.info("processing_batch", batch_num=i // batch_size + 1)
+
+                stats = await process_batch(
+                    batch, db, fetcher, args.mode,
+                    metadata_logger, args.execution_id, args.skip_existing,
+                    start_date_override, end_date_override
+                )
+
+                total_stats["total"] += stats["total"]
+                total_stats["successes"] += stats["successes"]
+                total_stats["failures"] += stats["failures"]
+
+                # Small delay between batches
+                await asyncio.sleep(2)
 
         logger.info("data_collection_complete", stats=total_stats)
 

@@ -43,9 +43,36 @@ initialize_task = PythonOperator(task_id='initialize_execution', python_callable
 fetch_sentiment_task = BashOperator(
     task_id='fetch_sentiment',
     bash_command="""
-    echo "Sentiment collection for {{ data_interval_start }} to {{ data_interval_end }}"
-    echo "TODO: Implement sentiment collection in main_enhanced.py with --mode sentiment"
-    echo "Will fetch batched sentiment scores (100 tickers/call)"
+    EXECUTION_ID="{{ ti.xcom_pull(task_ids='initialize_execution', key='execution_id') }}"
+    START_DATE="{{ data_interval_start.strftime('%Y-%m-%d') }}"
+    END_DATE="{{ data_interval_end.strftime('%Y-%m-%d') }}"
+
+    cat <<EOF | kubectl apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sentiment-{{ ts_nodash | lower }}
+  namespace: financial-screener
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: data-collector
+        image: financial-data-collector:latest
+        imagePullPolicy: Never
+        command: [python3, /app/src/main_enhanced.py, --mode, sentiment, --exchanges, NYSE,NASDAQ,LSE,BME,EURONEXT,FRANKFURT,SIX, --start-date, ${START_DATE}, --end-date, ${END_DATE}, --execution-id, ${EXECUTION_ID}]
+        env:
+        - {name: DATABASE_URL, valueFrom: {secretKeyRef: {name: postgres-secret, key: DATABASE_URL}}}
+        - {name: EODHD_API_KEY, valueFrom: {secretKeyRef: {name: data-api-secrets, key: EODHD_API_KEY}}}
+        - {name: LOG_LEVEL, value: INFO}
+        resources:
+          requests: {memory: 1Gi, cpu: 500m}
+          limits: {memory: 2Gi, cpu: 1000m}
+EOF
+    kubectl wait --for=condition=complete --timeout=1800s job/sentiment-{{ ts_nodash | lower }} -n financial-screener || true
     """,
     dag=dag,
     execution_timeout=timedelta(minutes=30),
