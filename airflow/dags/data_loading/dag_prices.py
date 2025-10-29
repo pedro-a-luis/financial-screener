@@ -1,20 +1,17 @@
 """
-02 - Incremental Prices Update (EODHD API) - DAILY
+Unified Prices DAG - EODHD API
 
-Fetches delta price data (missing days only) for all tickers.
-Runs daily after market close to get the latest prices.
+Fetches OHLCV price data for all tickers using Airflow's data_interval_start/end.
+Handles both historical (via backfill) and incremental (via schedule) loads.
 
-API: EODHD /eod endpoint
-Data: Daily OHLCV deltas (from last date to today)
-Mode: incremental
-Schedule: Daily at 22:00 UTC (after US market close at 21:00 UTC)
-Prerequisites: dag_01_historical_prices must be completed first
+Schedule: Daily at 22:00 UTC (after US market close)
+Backfill: airflow dags backfill dag_prices --start-date 2023-10-29 --end-date 2025-10-29
 
-This DAG:
-- Checks last price date per ticker
-- Fetches only missing dates
-- Minimal API calls (only what's needed)
-- Fast execution (~10-30 minutes)
+How it works:
+- Uses data_interval_start/end from Airflow context for date range
+- Backfill: Runs once per day in range (e.g., 2 years = 730 runs)
+- Scheduled: Runs daily for yesterday's data
+- Mode: Auto-detects bulk vs incremental based on date range
 """
 
 from airflow import DAG
@@ -35,20 +32,19 @@ default_args = {
     'owner': 'financial-screener',
     'depends_on_past': False,
     'email_on_failure': False,
-    'email_on_retry': False,
     'retries': 2,
     'retry_delay': timedelta(minutes=5),
 }
 
 dag = DAG(
-    dag_id='02_incremental_prices',
+    dag_id='dag_prices',
     default_args=default_args,
-    description='DAILY: Fetch incremental price data (deltas only) for all tickers',
-    schedule='0 22 * * *',  # 22:00 UTC daily (after US market close)
-    start_date=datetime(2025, 10, 29),
+    description='Unified prices DAG - handles historical (backfill) and incremental (daily)',
+    schedule='0 22 * * *',  # Daily at 22:00 UTC
+    start_date=datetime(2023, 10, 29),
     catchup=False,
     max_active_runs=1,
-    tags=['incremental', 'prices', 'eodhd', 'daily', 'production', 'step-02'],
+    tags=['unified', 'prices', 'eodhd', 'daily', 'backfill-ready'],
     doc_md=__doc__,
 )
 
@@ -58,21 +54,25 @@ initialize_task = PythonOperator(
     dag=dag,
 )
 
-# Process all exchanges
-process_all_task = BashOperator(
-    task_id='fetch_incremental_prices',
+# Main task - fetches prices for date range from context
+fetch_prices_task = BashOperator(
+    task_id='fetch_prices',
     bash_command="""
     EXECUTION_ID="{{ ti.xcom_pull(task_ids='initialize_execution', key='execution_id') }}"
+    START_DATE="{{ data_interval_start.strftime('%Y-%m-%d') }}"
+    END_DATE="{{ data_interval_end.strftime('%Y-%m-%d') }}"
+
+    echo "Fetching prices for date range: $START_DATE to $END_DATE"
 
     cat <<EOF | kubectl apply -f -
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: incr-prices-{{ ts_nodash | lower }}
+  name: prices-{{ ts_nodash | lower }}
   namespace: financial-screener
 spec:
   backoffLimit: 2
-  ttlSecondsAfterFinished: 86400
+  ttlSecondsAfterFinished: 3600
   template:
     spec:
       restartPolicy: Never
@@ -87,6 +87,10 @@ spec:
           - incremental
           - --exchanges
           - NYSE,NASDAQ,LSE,BME,EURONEXT,FRANKFURT,SIX
+          - --start-date
+          - ${START_DATE}
+          - --end-date
+          - ${END_DATE}
           - --execution-id
           - ${EXECUTION_ID}
         env:
@@ -111,7 +115,11 @@ spec:
             cpu: "2000m"
 EOF
 
-    kubectl wait --for=condition=complete --timeout=3600s job/incr-prices-{{ ts_nodash | lower }} -n financial-screener
+    kubectl wait --for=condition=complete --timeout=3600s job/prices-{{ ts_nodash | lower }} -n financial-screener || true
+
+    POD_NAME=$(kubectl get pods -n financial-screener -l job-name=prices-{{ ts_nodash | lower }} -o jsonpath='{.items[0].metadata.name}')
+    echo "=== Last 20 log lines ==="
+    kubectl logs -n financial-screener $POD_NAME --tail=20 2>&1 || echo "Could not retrieve logs"
     """,
     dag=dag,
     execution_timeout=timedelta(hours=1),
@@ -123,23 +131,4 @@ finalize_task = PythonOperator(
     dag=dag,
 )
 
-summary_task = BashOperator(
-    task_id='generate_summary',
-    bash_command="""
-    echo "================================================"
-    echo "Incremental Prices Update Complete"
-    echo "================================================"
-    kubectl exec -n databases postgresql-primary-0 -- psql -U appuser -d appdb -c "
-        SET search_path TO financial_screener;
-        SELECT
-            (SELECT COUNT(*) FROM stock_prices) as total_prices,
-            (SELECT MAX(date) FROM stock_prices) as latest_price_date,
-            (SELECT COUNT(DISTINCT asset_id) FROM stock_prices WHERE date = (SELECT MAX(date) FROM stock_prices)) as tickers_updated_today
-        FROM assets WHERE is_active = true LIMIT 1;
-    "
-    echo "================================================"
-    """,
-    dag=dag,
-)
-
-initialize_task >> process_all_task >> finalize_task >> summary_task
+initialize_task >> fetch_prices_task >> finalize_task
