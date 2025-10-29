@@ -52,14 +52,17 @@ def initialize_historical_execution(**context):
             await conn.execute("""
                 INSERT INTO process_executions (
                     execution_id,
-                    process_type,
-                    execution_date,
+                    process_name,
+                    parameters,
                     status,
                     started_at
                 ) VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (execution_id) DO UPDATE
-                SET started_at = EXCLUDED.started_at
-            """, execution_id, 'historical_load', execution_date, 'running', datetime.now())
+                SET started_at = EXCLUDED.started_at,
+                    parameters = EXCLUDED.parameters
+            """, execution_id, 'historical_load',
+                {'execution_date': str(execution_date), 'dag_id': dag_id},
+                'running', datetime.now())
 
             logger.info("historical_execution_initialized",
                        execution_id=execution_id,
@@ -330,8 +333,8 @@ def finalize_historical_execution(**context):
                     assets_processed = $4,
                     assets_succeeded = $5,
                     assets_failed = $6,
-                    total_api_calls = $7,
-                    metadata = jsonb_build_object(
+                    api_calls_used = $7,
+                    parameters = parameters || jsonb_build_object(
                         'month_loaded', $8,
                         'start_date', $9,
                         'end_date', $10,
@@ -406,11 +409,11 @@ def get_historical_progress_report(**context):
                 execution_stats AS (
                     SELECT
                         COUNT(*) as total_runs,
-                        SUM(total_api_calls) as total_api_calls,
+                        SUM(api_calls_used) as total_api_calls,
                         MIN(started_at) as first_run,
                         MAX(completed_at) as last_run
                     FROM process_executions
-                    WHERE process_type = 'historical_load'
+                    WHERE process_name = 'historical_load'
                       AND status != 'failed'
                 )
                 SELECT
